@@ -1,0 +1,36 @@
+{
+  "server": {
+    "addr": ":8080",
+    "read_timeout": 30,
+    "write_timeout": 30,
+    "shutdown_timeout": 5
+  },
+  "database": {
+    "dsn": "xiuno:xiuno123@tcp(127.0.0.1:3306)/xiuno?charset=utf8mb4&parseTime=True",
+    "max_open": 20,
+    "max_idle": 5,
+    "table_prefix": "bbs_"
+  },
+  "cache": {
+    "driver": "memory"
+  },
+  "jwt": {
+    "secret": "xiuno-go-secret-change-me",
+    "expire_hour": 72
+  },
+  "site": {
+    "name": "Xiuno Go",
+    "brief": "Powered by Xiuno Go"
+  },
+  "smtp": [
+    {
+      "email": "noreply@example.com",
+      "host": "smtp.example.com",
+      "port": 587,
+      "user": "noreply@example.com",
+      "pass": "your-password",
+      "secure": "starttls",
+      "fromname": "Xiuno Go"
+    }
+  ]
+}

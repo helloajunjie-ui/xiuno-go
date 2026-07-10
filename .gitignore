@@ -1,0 +1,27 @@
+# IDE
+.idea/
+.vscode/
+
+# Go
+*.exe
+*.test
+*.out
+/tmp/
+
+# Node
+node_modules/
+dist/
+
+# Uploads
+/upload/attach/*
+/upload/avatar/*
+/upload/forum/*
+/upload/tmp/*
+
+# Config
+/conf/conf.php
+
+# Build output
+xiuno.exe
+xiuno-server.exe
+xiuno-server-test.exe

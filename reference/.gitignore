@@ -1,0 +1,7 @@
+.idea/
+/conf/conf.php
+/tmp/*
+/upload/attach/*
+/upload/avatar/*
+/upload/forum/*
+/upload/tmp/*
