@@ -25,3 +25,9 @@ dist/
 xiuno.exe
 xiuno-server.exe
 xiuno-server-test.exe
+
+# PHP reference (original Xiuno 4.0.4)
+/reference/
+
+# PHP plugins (migrate later)
+/plugin/
