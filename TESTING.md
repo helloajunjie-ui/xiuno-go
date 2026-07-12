@@ -6,6 +6,7 @@
 > **API 测试状态**：全部通过 ✅
 > **前端构建**：`npm run build` 零错误 ✅
 > **Docker 构建**：`docker compose build` 零错误 ✅
+> **依赖版本**：Go 1.26.4 / MySQL 8.0 / chi v5.3.1 / sqlx v1.4.0 / go-sql-driver v1.10.0 / crypto v0.54.0
 > **扩展测试覆盖**：C1-C23（头像/插件/用户组/运行时/SSO/速率限制/SpamBlocker/后台管理/TAG/标签云/回帖编辑器/图片渲染/版块计数）— 全部通过 ✅
 > **已修复 Bug**：#13 附件下载404 / #19 CascadeDeleteThread标签关联 / #20 版块计数 / #21 回帖编辑器 / #22 图片渲染 / #23 itoa清理 / #24 DelPrefix / #25 Cache-Control — 全部 ✅
 > **未测试 API 端点**：17 个（D1-D17，见第十章）

@@ -1347,9 +1347,9 @@ func SomeHandler(app *core.AppCtx) http.HandlerFunc {
 
 | 组件 | 版本 |
 |------|------|
-| Go | >= 1.21 |
+| Go | >= 1.26.4 |
 | Node.js | >= 18 |
-| MySQL | >= 5.7 |
+| MySQL | >= 8.0 |
 | 操作系统 | Windows/Linux/macOS |
 
 ### 12.2 开发环境启动
