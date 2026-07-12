@@ -1,10 +1,13 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package handler
 
 import (
 	"encoding/json"
 	"html"
+	"log"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 
@@ -21,11 +24,19 @@ type ThreadCreateReq struct {
 	Subject string `json:"subject"`
 	Message string `json:"message"`
 	DocType int    `json:"doctype"` // 0:HTML, 1:TXT, 2:Markdown（默认）
+	Tags    string `json:"tags"`    // 逗号分隔的标签名，如 "golang,redis"
 }
 
 // ThreadCreateHandler 发帖端点（需挂载 AuthMiddleware）
 func ThreadCreateHandler(app *core.AppCtx) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rcv := recover(); rcv != nil {
+				log.Printf("[PANIC] ThreadCreateHandler: %v\n%s", rcv, debug.Stack())
+				core.JSONError(w, 500, "发帖失败")
+			}
+		}()
+
 		// 1. 从 context 提取已登录用户 UID（由 AuthMiddleware 注入）
 		claims := core.GetClaims(r.Context())
 		if claims == nil {
@@ -86,16 +97,22 @@ func ThreadCreateHandler(app *core.AppCtx) http.HandlerFunc {
 		err = app.Tx(func(tx *sqlx.Tx) error {
 			var txErr error
 			newTid, txErr = model.CreateThreadAndFirstPost(
-				r.Context(), tx, req.Fid, uid, userIP, req.Subject, filteredMessage, doctype, messageFmt)
+				r.Context(), tx, req.Fid, uid, model.IP2Long(userIP), req.Subject, filteredMessage, doctype, messageFmt)
 			return txErr
 		})
 		if err != nil {
+			log.Printf("[ERROR] ThreadCreateHandler 事务失败: %v", err)
 			core.JSONError(w, 500, "发帖失败")
 			return
 		}
 
+		// 5.5 失效版块缓存（使版块列表和单个版块的计数立即更新）
+		model.InvalidateForumListCache(r.Context(), app.Cache)
+		model.InvalidateForumCache(r.Context(), app.Cache, req.Fid)
+
 		// 6. 异步计数器更新（移出事务，消除行锁热点）
-		app.Counter.IncrForumThread(req.Fid)
+		// 注意：版块计数已在 CreateThreadAndFirstPost 事务中直接更新 DB，此处不再重复计数
+		// 用户发帖数仍通过异步计数器更新（非关键路径，允许短暂不一致）
 		app.Counter.IncrUserThread(uid)
 
 		// 6.5 用户组自动升级（根据发帖数）
@@ -103,6 +120,13 @@ func ThreadCreateHandler(app *core.AppCtx) http.HandlerFunc {
 
 		// 6.6 附件关联帖子（扫描 message 中的附件 URL，关联到新帖）
 		model.AttachAssocPost(r.Context(), app.DB, newTid, 0, uid, req.Message)
+
+		// 6.7 标签处理（逗号分隔的标签名）
+		if req.Tags != "" {
+			if err := model.TagSetThreadTags(r.Context(), app.DB, newTid, req.Tags); err != nil {
+				log.Printf("[WARN] ThreadCreateHandler 标签处理失败: %v", err)
+			}
+		}
 
 		// 7. 插件 Action 锚点：发帖后旁路动作（积分赠送、通知等）
 		app.Hook.DoAction(r.Context(), "thread_create_after", map[string]interface{}{

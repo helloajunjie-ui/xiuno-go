@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package handler
 
 import (
@@ -153,8 +154,11 @@ func AdminThreadOperationHandler(app *core.AppCtx) http.HandlerFunc {
 			switch req.Action {
 			case "delete":
 				// 软删除
+				var deletedFID uint32
 				err = app.Tx(func(tx *sqlx.Tx) error {
-					return model.SoftDeleteThread(r.Context(), tx, tid)
+					var txErr error
+					deletedFID, txErr = model.SoftDeleteThread(r.Context(), tx, tid)
+					return txErr
 				})
 				if err != nil {
 					continue
@@ -163,6 +167,8 @@ func AdminThreadOperationHandler(app *core.AppCtx) http.HandlerFunc {
 				_ = model.CreateModLog(r.Context(), app.DB, claims.UID, tid, 0, "批量删除", "delete", "后台批量删除")
 				// 失效缓存
 				model.InvalidateThreadCache(r.Context(), app.Cache, tid)
+				model.InvalidateForumListCache(r.Context(), app.Cache)
+				model.InvalidateForumCache(r.Context(), app.Cache, deletedFID)
 
 			case "close":
 				err = app.Tx(func(tx *sqlx.Tx) error {
@@ -289,6 +295,10 @@ func AdminThreadDeleteHandler(app *core.AppCtx) http.HandlerFunc {
 
 		// 失效缓存
 		model.InvalidateThreadCache(r.Context(), app.Cache, uint32(tid))
+		model.InvalidateForumListCache(r.Context(), app.Cache)
+		if thread != nil {
+			model.InvalidateForumCache(r.Context(), app.Cache, uint32(thread.FID))
+		}
 
 		core.JSONSuccess(w, nil)
 	}

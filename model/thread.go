@@ -1,10 +1,10 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package model
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -16,7 +16,7 @@ type Thread struct {
 	FID        int32        `db:"fid" json:"fid"`
 	Top        int32        `db:"top" json:"top"`
 	UID        int64        `db:"uid" json:"uid"`
-	UserIP     net.IP       `db:"userip" json:"-"`
+	UserIP     uint32       `db:"userip" json:"-"`
 	Subject    string       `db:"subject" json:"subject"`
 	CreateDate int64        `db:"create_date" json:"create_date"`
 	LastDate   int64        `db:"last_date" json:"last_date"`
@@ -63,13 +63,16 @@ type ThreadListItem struct {
 // ThreadDetail 帖子详情（JOIN post 表获取首帖内容）
 type ThreadDetail struct {
 	Thread
-	Message  string `db:"message" json:"message"`
-	Username string `db:"username" json:"username"`
-	Avatar   uint32 `db:"avatar" json:"avatar"`
+	Message    string `db:"message" json:"message"`
+	MessageFmt string `db:"message_fmt" json:"message_fmt"`
+	DocType    int32  `db:"doctype" json:"doctype"`
+	Username   string `db:"username" json:"username"`
+	Avatar     uint32 `db:"avatar" json:"avatar"`
 	// 以下字段由 ThreadFormatDetail 填充
 	CreateDateFmt string `db:"-" json:"create_date_fmt,omitempty"`
 	LastDateFmt   string `db:"-" json:"last_date_fmt,omitempty"`
 	ForumName     string `db:"-" json:"forum_name,omitempty"`
+	Tags          []Tag  `db:"-" json:"tags,omitempty"` // 帖子关联的标签
 }
 
 // GetThreadList 获取版块帖子列表（分页，按 lastpid 降序）
@@ -142,7 +145,7 @@ func GetThreadList(ctx context.Context, db *sqlx.DB, fid uint32, page, pageSize 
 func GetThreadDetail(ctx context.Context, db *sqlx.DB, tid uint32) (*ThreadDetail, error) {
 	var detail ThreadDetail
 	err := db.GetContext(ctx, &detail, `
-		SELECT t.*, p.message, u.username, u.avatar
+		SELECT t.*, p.message, p.message_fmt, p.doctype, u.username, u.avatar
 		FROM bbs_thread t
 		LEFT JOIN bbs_post p ON t.firstpid = p.pid
 		LEFT JOIN bbs_user u ON t.uid = u.uid
@@ -150,6 +153,15 @@ func GetThreadDetail(ctx context.Context, db *sqlx.DB, tid uint32) (*ThreadDetai
 	if err != nil {
 		return nil, fmt.Errorf("GetThreadDetail: %w", err)
 	}
+
+	// 填充标签
+	tags, err := TagFindByTID(ctx, db, tid)
+	if err == nil && len(tags) > 0 {
+		detail.Tags = tags
+	} else {
+		detail.Tags = []Tag{}
+	}
+
 	return &detail, nil
 }
 
@@ -170,19 +182,34 @@ func UpdateThreadContent(ctx context.Context, tx *sqlx.Tx, tid uint32, firstpid 
 
 // SoftDeleteThread 软删除主帖及旗下所有回复（事务内）
 // 不执行 DELETE FROM，仅设置 deleted_at 时间戳
-func SoftDeleteThread(ctx context.Context, tx *sqlx.Tx, tid uint32) error {
+// 同时同步更新版块统计（直接操作 DB，不依赖异步计数器，避免容器重启丢失计数）
+func SoftDeleteThread(ctx context.Context, tx *sqlx.Tx, tid uint32) (uint32, error) {
 	now := time.Now()
-	// 1. 软删除主帖
-	_, err := tx.ExecContext(ctx, `UPDATE bbs_thread SET deleted_at = ? WHERE tid = ?`, now, tid)
+
+	// 0. 查出帖子的 fid，用于后续更新版块统计
+	var fid uint32
+	err := tx.GetContext(ctx, &fid, `SELECT fid FROM bbs_thread WHERE tid = ?`, tid)
 	if err != nil {
-		return fmt.Errorf("SoftDeleteThread thread: %w", err)
+		return 0, fmt.Errorf("SoftDeleteThread read fid: %w", err)
+	}
+
+	// 1. 软删除主帖
+	_, err = tx.ExecContext(ctx, `UPDATE bbs_thread SET deleted_at = ? WHERE tid = ?`, now, tid)
+	if err != nil {
+		return 0, fmt.Errorf("SoftDeleteThread thread: %w", err)
 	}
 	// 2. 软删除所有回帖
 	_, err = tx.ExecContext(ctx, `UPDATE bbs_post SET deleted_at = ? WHERE tid = ?`, now, tid)
 	if err != nil {
-		return fmt.Errorf("SoftDeleteThread post: %w", err)
+		return 0, fmt.Errorf("SoftDeleteThread post: %w", err)
 	}
-	return nil
+	// 3. 更新版块统计（GREATEST 防 unsigned 溢出）
+	_, err = tx.ExecContext(ctx,
+		`UPDATE bbs_forum SET threads = GREATEST(CAST(threads AS SIGNED) - 1, 0) WHERE fid = ?`, fid)
+	if err != nil {
+		return 0, fmt.Errorf("SoftDeleteThread decr forum: %w", err)
+	}
+	return fid, nil
 }
 
 // GetUserThreadList 获取指定用户的帖子列表（分页，按 tid 降序）
@@ -229,17 +256,17 @@ func ModerateThread(ctx context.Context, tx *sqlx.Tx, tid uint32, action string,
 }
 
 // CreateThreadAndFirstPost 事务处理发帖主逻辑
-// 在一个事务中完成：创建主帖 → 创建首帖 → 反写 firstpid/lastpid
-// 统计更新（版块/用户计数）移出事务，由 AsyncCounter 异步处理
+// 在一个事务中完成：创建主帖 → 创建首帖 → 反写 firstpid/lastpid → 更新版块统计
+// 用户发帖计数仍由 AsyncCounter 异步处理（非关键路径，允许短暂不一致）
 // doctype: 0=HTML, 1=TXT, 2=Markdown; messageFmt 为格式化后的展示内容
-func CreateThreadAndFirstPost(ctx context.Context, tx *sqlx.Tx, fid, uid uint32, userIP net.IP, subject, message string, doctype int32, messageFmt string) (uint32, error) {
+func CreateThreadAndFirstPost(ctx context.Context, tx *sqlx.Tx, fid, uid uint32, userIP uint32, subject, message string, doctype int32, messageFmt string) (uint32, error) {
 	now := time.Now().Unix()
 
 	// 1. 插入主帖
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO bbs_thread (fid, uid, userip, subject, create_date, last_date, lastuid)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		fid, uid, userIP.To16(), subject, now, now, uid)
+		fid, uid, userIP, subject, now, now, uid)
 	if err != nil {
 		return 0, err
 	}
@@ -250,7 +277,7 @@ func CreateThreadAndFirstPost(ctx context.Context, tx *sqlx.Tx, fid, uid uint32,
 	resPost, err := tx.ExecContext(ctx, `
 		INSERT INTO bbs_post (tid, uid, isfirst, create_date, userip, doctype, message, message_fmt)
 		VALUES (?, ?, 1, ?, ?, ?, ?, ?)`,
-		tid, uid, now, userIP.To16(), doctype, message, messageFmt)
+		tid, uid, now, userIP, doctype, message, messageFmt)
 	if err != nil {
 		return 0, err
 	}
@@ -266,6 +293,13 @@ func CreateThreadAndFirstPost(ctx context.Context, tx *sqlx.Tx, fid, uid uint32,
 	// 4. 记录用户参与的主题（mythread）
 	if err := MyThreadCreate(ctx, tx, uid, tid); err != nil {
 		return 0, err
+	}
+
+	// 5. 更新版块帖子计数（事务内直接操作 DB，不依赖 AsyncCounter）
+	//    AsyncCounter 在容器重启时会丢失未刷新的计数，导致版块统计永久偏差
+	_, err = tx.ExecContext(ctx, `UPDATE bbs_forum SET threads = threads + 1 WHERE fid = ?`, fid)
+	if err != nil {
+		return 0, fmt.Errorf("CreateThreadAndFirstPost incr forum: %w", err)
 	}
 
 	return tid, nil
@@ -461,7 +495,7 @@ func ThreadSafeInfo(thread *Thread) *Thread {
 	if thread == nil {
 		return nil
 	}
-	thread.UserIP = nil
+	thread.UserIP = 0
 	return thread
 }
 

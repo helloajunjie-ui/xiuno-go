@@ -1,7 +1,13 @@
+# Xiuno Go — 一键部署
+# 使用方式：docker compose up -d
+# 访问地址：http://localhost:8080
+# 管理员账号：admin / 密码需通过 docker logs 查看（首次启动自动生成并打印）
+
 services:
   mysql:
     image: mysql:8.0
     container_name: xiuno-mysql
+    restart: always
     environment:
       MYSQL_ROOT_PASSWORD: root123
       MYSQL_DATABASE: xiuno
@@ -11,7 +17,6 @@ services:
       - "3307:3306"
     volumes:
       - mysql-data:/var/lib/mysql
-      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
     command: >
       --default-authentication-plugin=mysql_native_password
       --character-set-server=utf8mb4
@@ -20,14 +25,15 @@ services:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot123"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 15
+      start_period: 30s
     networks:
       - xiuno-net
 
   app:
     build:
-      context: ..
-      dockerfile: Xiuno/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     container_name: xiuno-app
     restart: always
     ports:

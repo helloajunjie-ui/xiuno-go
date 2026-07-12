@@ -1,10 +1,10 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package model
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net"
 	"regexp"
 	"strings"
 	"time"
@@ -21,7 +21,7 @@ type Post struct {
 	UID        int64        `db:"uid" json:"uid"`
 	IsFirst    int32        `db:"isfirst" json:"isfirst"`
 	CreateDate int64        `db:"create_date" json:"create_date"`
-	UserIP     net.IP       `db:"userip" json:"-"`
+	UserIP     uint32       `db:"userip" json:"-"`
 	Images     int32        `db:"images" json:"images"`
 	Files      int32        `db:"files" json:"files"`
 	DocType    int32        `db:"doctype" json:"doctype"`
@@ -45,20 +45,21 @@ type PostListItem struct {
 	Post
 	Username string `db:"username" json:"username"`
 	Avatar   uint32 `db:"avatar" json:"avatar"`
+	Subject  string `db:"subject" json:"subject"` // 来自 bbs_thread 的主题标题
 }
 
 // CreateReply 回帖核心事务
 // 在一个事务中完成：插入回帖 → 更新主帖 lastpid/lastuid/last_date（顶帖）
 // 统计更新（帖子回复数/用户回帖数）移出事务，由 AsyncCounter 异步处理
 // doctype: 0=HTML, 1=TXT, 2=Markdown; messageFmt 为格式化后的展示内容
-func CreateReply(ctx context.Context, tx *sqlx.Tx, tid, uid uint32, userIP net.IP, message string, quotePid uint32, doctype int32, messageFmt string) (uint32, error) {
+func CreateReply(ctx context.Context, tx *sqlx.Tx, tid, uid uint32, userIP uint32, message string, quotePid uint32, doctype int32, messageFmt string) (uint32, error) {
 	now := time.Now().Unix()
 
 	// 1. 插入回帖（isfirst = 0）
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO bbs_post (tid, uid, isfirst, create_date, userip, doctype, quotepid, message, message_fmt)
 		VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)`,
-		tid, uid, now, userIP.To16(), doctype, quotePid, message, messageFmt)
+		tid, uid, now, userIP, doctype, quotePid, message, messageFmt)
 	if err != nil {
 		return 0, err
 	}
@@ -107,9 +108,10 @@ func GetUserPostList(ctx context.Context, db *sqlx.DB, uid uint32, page, pageSiz
 	offset := (page - 1) * pageSize
 	var list []PostListItem
 	err := db.SelectContext(ctx, &list, `
-		SELECT p.*, u.username, u.avatar
+		SELECT p.*, u.username, u.avatar, t.subject
 		FROM bbs_post p
 		LEFT JOIN bbs_user u ON p.uid = u.uid
+		LEFT JOIN bbs_thread t ON p.tid = t.tid
 		WHERE p.uid = ? AND p.isfirst = 0 AND p.deleted_at IS NULL
 		ORDER BY p.pid DESC
 		LIMIT ? OFFSET ?`,
@@ -252,7 +254,7 @@ func PostSafeInfo(post *Post) *Post {
 		return nil
 	}
 	safe := *post
-	safe.UserIP = nil
+	safe.UserIP = 0
 	return &safe
 }
 

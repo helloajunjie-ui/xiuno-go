@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@toast-ui/editor": "^3.2.2",
     "@types/dompurify": "^3.2.0",
     "@types/marked": "^6.0.0",
     "axios": "^1.18.1",

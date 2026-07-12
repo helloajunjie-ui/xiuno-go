@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package handler
 
 import (
@@ -51,7 +52,7 @@ func UserLoginHandler(app *core.AppCtx) http.HandlerFunc {
 				core.JSONError(w, 401, "账号或密码错误")
 				return
 			}
-			core.JSONError(w, 500, "服务器内部错误")
+			core.JSONErrorLog(w, 500, "服务器内部错误", err)
 			return
 		}
 

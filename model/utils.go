@@ -1,9 +1,28 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package model
 
 import (
 	"fmt"
+	"net"
 	"time"
 )
+
+// IP2Long 将 net.IP 转换为 uint32（MySQL INET_ATON() 的 Go 实现）
+// 仅支持 IPv4，非 IPv4 返回 0
+func IP2Long(ip net.IP) uint32 {
+	ipv4 := ip.To4()
+	if ipv4 == nil {
+		return 0
+	}
+	return uint32(ipv4[0])<<24 | uint32(ipv4[1])<<16 | uint32(ipv4[2])<<8 | uint32(ipv4[3])
+}
+
+// modelLong2IP 将 uint32 格式的 IP 地址转换为点分十进制字符串
+// MySQL INET_NTOA() 的 Go 实现
+// 输入: 2130706433 → 输出: "127.0.0.1"
+func modelLong2IP(ip uint32) string {
+	return fmt.Sprintf("%d.%d.%d.%d", byte(ip>>24), byte(ip>>16), byte(ip>>8), byte(ip))
+}
 
 // toUint32 将 interface{} 安全转换为 uint32
 // 用于 ThreadFind 等通用查询函数的条件参数转换

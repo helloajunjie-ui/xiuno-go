@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package core
 
 import (
@@ -12,6 +13,7 @@ type Cache interface {
 	Get(ctx context.Context, key string) ([]byte, bool)
 	Set(ctx context.Context, key string, val []byte, ttl time.Duration)
 	Del(ctx context.Context, key string)
+	DelPrefix(ctx context.Context, prefix string) // 按前缀批量删除，用于精准失效
 	Close() error
 }
 
@@ -65,6 +67,16 @@ func (c *memoryCache) Del(_ context.Context, key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.data, key)
+}
+
+func (c *memoryCache) DelPrefix(_ context.Context, prefix string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k := range c.data {
+		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+			delete(c.data, k)
+		}
+	}
 }
 
 func (c *memoryCache) Close() error { return nil }

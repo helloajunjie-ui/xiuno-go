@@ -1,3 +1,4 @@
+<!-- xiuno-go v2.1.0-beta 尼克修改版 -->
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
@@ -15,7 +16,8 @@ const loading = ref(true)
 
 const avatarUrl = computed(() => {
   if (!user.value) return ''
-  return `/upload/avatar/${user.value.uid}.png?t=${user.value.avatar || 0}`
+  // 优先使用后端返回的完整 avatar_url（含 3 层目录切分），回退到扁平路径
+  return user.value.avatar_url || `/upload/avatar/${user.value.uid}.png?t=${user.value.avatar || 0}`
 })
 
 onMounted(async () => {
@@ -54,7 +56,7 @@ function timeAgo(ts: number): string {
     <!-- 用户信息卡片 -->
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-4">
       <div class="flex items-center gap-4">
-        <img :src="avatarUrl" alt="avatar"
+        <img v-if="user" :src="avatarUrl" alt="avatar"
           class="w-16 h-16 rounded-full object-cover border-2 border-gray-100 shrink-0"
           @error="($event.target as HTMLImageElement).src='/upload/avatar/0.png'" />
         <div class="flex-1 min-w-0">

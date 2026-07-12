@@ -6,7 +6,7 @@
     "shutdown_timeout": 5
   },
   "database": {
-    "dsn": "xiuno:xiuno123@tcp(127.0.0.1:3306)/xiuno?charset=utf8mb4&parseTime=True",
+    "dsn": "xiuno:xiuno123@tcp(mysql:3306)/xiuno?charset=utf8mb4&parseTime=True",
     "max_open": 20,
     "max_idle": 5,
     "table_prefix": "bbs_"

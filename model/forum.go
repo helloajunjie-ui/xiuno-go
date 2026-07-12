@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package model
 
 import (
@@ -45,9 +46,8 @@ type ForumAccess struct {
 
 // CreateForum 创建新版块
 func CreateForum(ctx context.Context, db *sqlx.DB, f *Forum) (uint32, error) {
-	res, err := db.ExecContext(ctx, `
-		INSERT INTO bbs_forum (name, brief, announcement, accesson, rank, create_date)
-		VALUES (?, ?, ?, ?, ?, ?)`,
+	res, err := db.ExecContext(ctx,
+		"INSERT INTO bbs_forum (name, brief, announcement, accesson, `rank`, create_date) VALUES (?, ?, ?, ?, ?, ?)",
 		f.Name, f.Brief, f.Announcement, f.AccessOn, f.Rank, f.CreateDate)
 	if err != nil {
 		return 0, err
@@ -58,9 +58,8 @@ func CreateForum(ctx context.Context, db *sqlx.DB, f *Forum) (uint32, error) {
 
 // UpdateForum 修改版块信息
 func UpdateForum(ctx context.Context, db *sqlx.DB, fid uint32, f *Forum) error {
-	_, err := db.ExecContext(ctx, `
-		UPDATE bbs_forum SET name = ?, brief = ?, announcement = ?, accesson = ?, rank = ?
-		WHERE fid = ?`,
+	_, err := db.ExecContext(ctx,
+		"UPDATE bbs_forum SET name = ?, brief = ?, announcement = ?, accesson = ?, `rank` = ? WHERE fid = ?",
 		f.Name, f.Brief, f.Announcement, f.AccessOn, f.Rank, fid)
 	return err
 }
@@ -99,7 +98,7 @@ func ForumFormat(forum *Forum, uploadURL string) {
 // 对应 PHP: forum_find()
 func ForumFind(ctx context.Context, db *sqlx.DB) ([]Forum, error) {
 	var list []Forum
-	err := db.SelectContext(ctx, &list, `SELECT * FROM bbs_forum ORDER BY rank ASC`)
+	err := db.SelectContext(ctx, &list, "SELECT * FROM bbs_forum ORDER BY `rank` ASC")
 	if err != nil {
 		return nil, fmt.Errorf("ForumFind: %w", err)
 	}

@@ -1,8 +1,10 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package model
 
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"xiuno/core"
@@ -71,7 +73,7 @@ func InvalidateForumListCache(ctx context.Context, cache core.Cache) {
 // GetForumWithCache 获取单个版块（带缓存）
 // 缓存 key: forum:{fid}
 func GetForumWithCache(ctx context.Context, cache core.Cache, db *sqlx.DB, fid uint32) (*Forum, error) {
-	cacheKey := cachePrefixForum + itoa(int(fid))
+	cacheKey := cachePrefixForum + strconv.Itoa(int(fid))
 
 	// 1. 尝试从缓存读取
 	data, ok := cache.Get(ctx, cacheKey)
@@ -98,7 +100,7 @@ func GetForumWithCache(ctx context.Context, cache core.Cache, db *sqlx.DB, fid u
 
 // InvalidateForumCache 失效单个版块缓存
 func InvalidateForumCache(ctx context.Context, cache core.Cache, fid uint32) {
-	cache.Del(ctx, cachePrefixForum+itoa(int(fid)))
+	cache.Del(ctx, cachePrefixForum+strconv.Itoa(int(fid)))
 }
 
 // ==================== 用户组缓存 ====================
@@ -136,7 +138,7 @@ func InvalidateGroupListCache(ctx context.Context, cache core.Cache) {
 // GetGroupWithCache 获取单个用户组（带缓存）
 // 缓存 key: group:{gid}
 func GetGroupWithCache(ctx context.Context, cache core.Cache, db *sqlx.DB, gid uint32) (*Group, error) {
-	cacheKey := cachePrefixGroup + itoa(int(gid))
+	cacheKey := cachePrefixGroup + strconv.Itoa(int(gid))
 
 	data, ok := cache.Get(ctx, cacheKey)
 	if ok && data != nil {
@@ -160,7 +162,7 @@ func GetGroupWithCache(ctx context.Context, cache core.Cache, db *sqlx.DB, gid u
 
 // InvalidateGroupCache 失效单个用户组缓存
 func InvalidateGroupCache(ctx context.Context, cache core.Cache, gid uint32) {
-	cache.Del(ctx, cachePrefixGroup+itoa(int(gid)))
+	cache.Del(ctx, cachePrefixGroup+strconv.Itoa(int(gid)))
 }
 
 // ==================== 用户缓存 ====================
@@ -174,7 +176,7 @@ func GetUserWithCache(ctx context.Context, cache core.Cache, db *sqlx.DB, uid ui
 		return nil, nil
 	}
 
-	cacheKey := cachePrefixUser + itoa(int(uid))
+	cacheKey := cachePrefixUser + strconv.Itoa(int(uid))
 
 	data, ok := cache.Get(ctx, cacheKey)
 	if ok && data != nil {
@@ -201,7 +203,7 @@ func InvalidateUserCache(ctx context.Context, cache core.Cache, uid uint32) {
 	if uid == 0 {
 		return
 	}
-	cache.Del(ctx, cachePrefixUser+itoa(int(uid)))
+	cache.Del(ctx, cachePrefixUser+strconv.Itoa(int(uid)))
 }
 
 // ==================== 权限缓存 ====================
@@ -215,7 +217,7 @@ func GetEffectiveAccessWithCache(ctx context.Context, cache core.Cache, db *sqlx
 		return &EffectiveAccess{AllowRead: 1, AllowThread: 1, AllowPost: 1}, nil
 	}
 
-	cacheKey := cachePrefixAccess + itoa(int(fid)) + ":" + itoa(int(gid))
+	cacheKey := cachePrefixAccess + strconv.Itoa(int(fid)) + ":" + strconv.Itoa(int(gid))
 
 	data, ok := cache.Get(ctx, cacheKey)
 	if ok && data != nil {
@@ -239,16 +241,12 @@ func GetEffectiveAccessWithCache(ctx context.Context, cache core.Cache, db *sqlx
 
 // InvalidateAccessCache 失效权限缓存（权限配置更新后调用）
 func InvalidateAccessCache(ctx context.Context, cache core.Cache, fid, gid uint32) {
-	cache.Del(ctx, cachePrefixAccess+itoa(int(fid))+":"+itoa(int(gid)))
+	cache.Del(ctx, cachePrefixAccess+strconv.Itoa(int(fid))+":"+strconv.Itoa(int(gid)))
 }
 
 // InvalidateAccessCacheByFID 失效某个版块的所有权限缓存（删除版块时调用）
 func InvalidateAccessCacheByFID(ctx context.Context, cache core.Cache, fid uint32) {
-	// 遍历所有可能的 gid（1-255），批量失效
-	// 更精确的做法是在写入时记录 key，但这里简单遍历
-	for gid := uint32(0); gid <= 255; gid++ {
-		cache.Del(ctx, cachePrefixAccess+itoa(int(fid))+":"+itoa(int(gid)))
-	}
+	cache.DelPrefix(ctx, cachePrefixAccess+strconv.Itoa(int(fid))+":")
 }
 
 // ==================== 帖子缓存 ====================
@@ -257,7 +255,7 @@ func InvalidateAccessCacheByFID(ctx context.Context, cache core.Cache, fid uint3
 // 缓存 key: thread:{tid}
 // 帖子内容不变，但浏览数可能变化，TTL 较短
 func GetThreadDetailWithCache(ctx context.Context, cache core.Cache, db *sqlx.DB, tid uint32) (*ThreadDetail, error) {
-	cacheKey := cachePrefixThread + itoa(int(tid))
+	cacheKey := cachePrefixThread + strconv.Itoa(int(tid))
 
 	data, ok := cache.Get(ctx, cacheKey)
 	if ok && data != nil {
@@ -281,7 +279,7 @@ func GetThreadDetailWithCache(ctx context.Context, cache core.Cache, db *sqlx.DB
 
 // InvalidateThreadCache 失效帖子详情缓存（帖子更新/删除后调用）
 func InvalidateThreadCache(ctx context.Context, cache core.Cache, tid uint32) {
-	cache.Del(ctx, cachePrefixThread+itoa(int(tid)))
+	cache.Del(ctx, cachePrefixThread+strconv.Itoa(int(tid)))
 }
 
 // ==================== 批量失效辅助 ====================

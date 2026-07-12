@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package handler
 
 import (
@@ -104,7 +105,7 @@ func ReplyCreateHandler(app *core.AppCtx) http.HandlerFunc {
 		// 执行强一致性回帖事务
 		err = app.Tx(func(tx *sqlx.Tx) error {
 			var txErr error
-			newPid, txErr = model.CreateReply(r.Context(), tx, uint32(tid), uid, userIP, filteredMessage, req.QuotePid, doctype, messageFmt)
+			newPid, txErr = model.CreateReply(r.Context(), tx, uint32(tid), uid, model.IP2Long(userIP), filteredMessage, req.QuotePid, doctype, messageFmt)
 			return txErr
 		})
 		if err != nil {

@@ -1,3 +1,4 @@
+<!-- xiuno-go v2.1.0-beta 尼克修改版 -->
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
@@ -55,7 +56,7 @@ async function submit() {
       router.push('/login')
     }, 3000)
   } catch (e: any) {
-    errorMsg.value = e?.response?.data?.message || e?.message || '密码修改失败'
+    errorMsg.value = e.message || '密码修改失败'
   } finally {
     submitting.value = false
   }

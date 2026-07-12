@@ -1,11 +1,33 @@
+<!-- xiuno-go v2.1.0-beta 尼克修改版 -->
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { marked } from 'marked'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useRoute } from 'vue-router'
+import Editor from '@toast-ui/editor'
+import '@toast-ui/editor/dist/toastui-editor.css'
 import DOMPurify from 'dompurify'
+import { marked, Renderer } from 'marked'
+
+// 配置 marked：链接新窗口打开
+const renderer = new Renderer()
+renderer.link = function({ href, title, text }) {
+  const titleAttr = title ? ` title="${title}"` : ''
+  return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`
+}
+marked.setOptions({ renderer })
+
+// DOMPurify 配置：保留 target/rel 属性，允许 figure/figcaption 标签
+const DOMPURIFY_CONFIG = {
+  ADD_TAGS: ['figure', 'figcaption'],
+  ADD_ATTR: ['target', 'rel'],
+}
 import request from '../utils/request'
 import { useUserStore } from '../stores/user'
 import ModerateModal from '../components/ModerateModal.vue'
+
+interface Tag {
+  tagid: number
+  name: string
+}
 
 interface ThreadDetail {
   tid: number
@@ -20,6 +42,7 @@ interface ThreadDetail {
   create_date: number
   views: number
   posts: number
+  tags?: Tag[]
 }
 
 interface ReplyItem {
@@ -35,13 +58,11 @@ interface ReplyItem {
 }
 
 const route = useRoute()
-const router = useRouter()
 const userStore = useUserStore()
 
 const detail = ref<ThreadDetail | null>(null)
 const replies = ref<ReplyItem[]>([])
 const loading = ref(true)
-const replyText = ref('')
 const submitting = ref(false)
 const attachFiles = ref<File[]>([])
 const uploading = ref(false)
@@ -58,6 +79,13 @@ const quotePid = ref(0)
 const showModModal = ref(false)
 const modAction = ref('')
 
+// Toast UI Editor 实例
+let replyEditor: Editor | null = null
+const replyEditorEl = ref<HTMLDivElement | null>(null)
+
+// 存储渲染后的 HTML（主帖 + 每条回帖）
+const renderedContent = ref<Record<number, string>>({})
+
 const currentUser = computed(() => userStore.user)
 const canModerate = computed(() => {
   return userStore.isLoggedIn && userStore.user?.gid !== undefined && userStore.user.gid <= 3
@@ -73,14 +101,35 @@ function onModDone() {
   fetchDetail()
 }
 
-// 智能渲染分流：根据 doctype 选择渲染策略
-function renderPostContent(post: { doctype?: number; message_fmt?: string; message?: string }): string {
+// 异步渲染 Markdown 内容
+async function renderContent(post: { doctype?: number; message_fmt?: string; message?: string }): Promise<string> {
   const doctype = post.doctype ?? 2
-  if (doctype === 0 || doctype === 1) {
-    return DOMPurify.sanitize(post.message_fmt || '')
+  if (doctype === 1) {
+    // TXT 纯文本：直接输出 message_fmt（htmlEscape 后的安全文本）
+    return DOMPurify.sanitize(post.message_fmt || '', DOMPURIFY_CONFIG)
   }
-  const raw = marked.parse(post.message || '', { async: false }) as string
-  return DOMPurify.sanitize(raw)
+  if (doctype === 0) {
+    // HTML 模式
+    const src = post.message || post.message_fmt || ''
+    const raw = await marked.parse(src, { async: true })
+    return DOMPurify.sanitize(raw, DOMPURIFY_CONFIG)
+  }
+  // doctype=2 Markdown：用 marked 渲染 message
+  const msg = post.message || ''
+  const raw = await marked.parse(msg, { async: true })
+  return DOMPurify.sanitize(raw, DOMPURIFY_CONFIG)
+}
+
+// 渲染主帖和所有回帖
+async function renderAllContent() {
+  const map: Record<number, string> = {}
+  if (detail.value) {
+    map[-1] = await renderContent(detail.value)
+  }
+  for (const reply of replies.value) {
+    map[reply.pid] = await renderContent(reply)
+  }
+  renderedContent.value = map
 }
 
 // 引用回复：从 replies 中找被引用的楼层，取前 50 字
@@ -110,6 +159,8 @@ async function fetchDetail() {
     ])
     detail.value = d as ThreadDetail
     replies.value = r.list || []
+    // 数据就绪后异步渲染所有内容
+    await renderAllContent()
   } catch (e) {
     console.error('获取帖子详情失败', e)
   } finally {
@@ -129,8 +180,10 @@ async function uploadAttachments() {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
       const url = res.url || `/upload/${res.path}`
-      const markdownImg = `![${file.name}](${url})`
-      replyText.value += (replyText.value ? '\n' : '') + markdownImg
+      const markdownLink = `[${file.name}](${url})`
+      if (replyEditor) {
+        replyEditor.insertText(markdownLink)
+      }
     }
     attachFiles.value = []
   } catch (e: any) {
@@ -150,16 +203,20 @@ function handleFileInput(e: Event) {
 }
 
 async function handleReply() {
-  if (!replyText.value.trim()) return
+  const message = replyEditor ? replyEditor.getMarkdown() : ''
+  if (!message.trim()) return
   submitting.value = true
   try {
     const tid = route.params.tid as string
-    const payload: any = { message: replyText.value }
+    const payload: any = { message, doctype: 2 }
     if (quotePid.value > 0) {
       payload.quotepid = quotePid.value
     }
     await request.post(`/thread/${tid}/post`, payload)
-    replyText.value = ''
+    // 清空编辑器
+    if (replyEditor) {
+      replyEditor.setMarkdown('')
+    }
     quotePid.value = 0
     await fetchDetail()
   } catch (e: any) {
@@ -221,7 +278,9 @@ async function saveEdit() {
 // --- 引用回复 ---
 function quoteReply(pid: number, username: string) {
   quotePid.value = pid
-  replyText.value = `> **${username}** 说：\n\n`
+  if (replyEditor) {
+    replyEditor.setMarkdown(`> **${username}** 说：\n\n`)
+  }
   // 滚动到回复框
   setTimeout(() => {
     document.getElementById('reply-box')?.scrollIntoView({ behavior: 'smooth' })
@@ -232,7 +291,53 @@ function cancelQuote() {
   quotePid.value = 0
 }
 
-onMounted(fetchDetail)
+// 初始化回复编辑器
+function initReplyEditor() {
+  if (replyEditorEl.value && !replyEditor) {
+    replyEditor = new Editor({
+      el: replyEditorEl.value,
+      height: '200px',
+      initialEditType: 'wysiwyg',
+      previewStyle: 'vertical',
+      language: 'zh-CN',
+      hideModeSwitch: false,
+      hooks: {
+        addImageBlobHook: async (blob: Blob | File, callback: (url: string, altText?: string) => void) => {
+          try {
+            const formData = new FormData()
+            formData.append('file', blob)
+            const res: any = await request.post('/attach', formData, {
+              headers: { 'Content-Type': 'multipart/form-data' },
+            })
+            const url = res.url || `/upload/${res.path}`
+            callback(url, (blob as File).name || 'image')
+          } catch (e: any) {
+            alert('图片上传失败: ' + (e.message || '未知错误'))
+          }
+        },
+      },
+    })
+  }
+}
+
+onMounted(() => {
+  fetchDetail()
+})
+
+// 监听 loading 结束后初始化编辑器
+// flush: 'post' 保证 DOM 更新完成后才执行回调
+watch(loading, (isLoading) => {
+  if (!isLoading) {
+    initReplyEditor()
+  }
+}, { flush: 'post' })
+
+onBeforeUnmount(() => {
+  if (replyEditor) {
+    replyEditor.destroy()
+    replyEditor = null
+  }
+})
 </script>
 
 <template>
@@ -266,15 +371,24 @@ onMounted(fetchDetail)
           </template>
         </div>
       </div>
-      <div class="flex items-center gap-3 text-sm text-gray-500 mb-6">
+      <div class="flex items-center gap-3 text-sm text-gray-500 mb-2">
         <span class="font-medium text-gray-700">{{ detail.username }}</span>
         <span>{{ timeAgo(detail.create_date) }}</span>
         <span class="ml-auto">{{ detail.views }} 浏览</span>
       </div>
 
+      <!-- 标签 -->
+      <div v-if="detail.tags && detail.tags.length > 0" class="flex flex-wrap gap-1.5 mb-4">
+        <router-link v-for="tag in detail.tags" :key="tag.tagid"
+          :to="`/tag/${tag.tagid}`"
+          class="inline-block px-2.5 py-0.5 bg-indigo-50 text-indigo-600 text-xs rounded-full hover:bg-indigo-100 transition-colors">
+          {{ tag.name }}
+        </router-link>
+      </div>
+
       <!-- 编辑模式：主帖 -->
       <div v-if="editingPid === null">
-        <div class="prose prose-gray max-w-none" v-html="renderPostContent(detail)"></div>
+        <div class="prose prose-gray max-w-none" v-html="renderedContent[-1] || ''"></div>
       </div>
       <div v-else class="space-y-3">
         <div>
@@ -326,7 +440,7 @@ onMounted(fetchDetail)
           </div>
         </div>
         <div v-else>
-          <div class="prose prose-sm prose-gray max-w-none" v-html="renderPostContent(reply)"></div>
+          <div class="prose prose-sm prose-gray max-w-none" v-html="renderedContent[reply.pid] || ''"></div>
           <!-- 操作按钮 -->
           <div class="flex gap-3 mt-3 pt-3 border-t border-gray-100">
             <button @click="quoteReply(reply.pid, reply.username)"
@@ -349,17 +463,23 @@ onMounted(fetchDetail)
         <span>正在引用 #{{ replies.findIndex(r => r.pid === quotePid) + 2 }} 楼</span>
         <button @click="cancelQuote" class="ml-auto text-indigo-400 hover:text-indigo-700">&times;</button>
       </div>
-      <textarea v-model="replyText" rows="3" placeholder="写下你的回复...（支持 Markdown）"
-        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none text-sm"></textarea>
+
+      <!-- Toast UI Editor -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">回复内容</label>
+        <div ref="replyEditorEl" class="border border-gray-300 rounded-lg"></div>
+      </div>
+
       <div class="flex items-center gap-2 mt-2">
         <label class="cursor-pointer text-sm text-indigo-600 hover:text-indigo-800 transition-colors">
           <input type="file" multiple accept="image/*,.pdf" class="hidden" @change="handleFileInput" />
           📎 上传附件
         </label>
         <span v-if="uploading" class="text-sm text-gray-400">上传中...</span>
+        <span class="text-xs text-gray-400 ml-2">图片可直接拖拽或粘贴到编辑器中</span>
       </div>
       <div class="flex justify-end mt-3">
-        <button @click="handleReply" :disabled="submitting || !replyText.trim()"
+        <button @click="handleReply" :disabled="submitting"
           class="bg-indigo-600 text-white px-5 py-1.5 rounded-lg text-sm hover:bg-indigo-700 disabled:opacity-50 transition-colors">
           {{ submitting ? '发送中...' : '回复' }}
         </button>

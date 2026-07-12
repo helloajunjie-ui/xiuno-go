@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package handler
 
 import (
@@ -12,6 +13,9 @@ import (
 
 // cacheKeySiteConf 站点配置在 Cache 中的 key
 const cacheKeySiteConf = "site_conf"
+
+// cacheKeySiteTheme 站点主题在 Cache 中的 key
+const cacheKeySiteTheme = "site_theme"
 
 // ConfigHandler GET /api/v1/config
 // 从内存缓存中读取站点配置，0 DB 压力
@@ -101,6 +105,28 @@ func setSiteConf(app *core.AppCtx, ctx context.Context, conf *model.SiteConf) {
 	app.Cache.Set(ctx, cacheKeySiteConf, data, 0) // 0 = 永不过期
 }
 
+// getSiteTheme 从缓存读取站点主题，缓存未命中则返回默认值
+func getSiteTheme(app *core.AppCtx, ctx context.Context) *model.SiteTheme {
+	data, ok := app.Cache.Get(ctx, cacheKeySiteTheme)
+	if !ok || data == nil {
+		return model.DefaultSiteTheme()
+	}
+	var theme model.SiteTheme
+	if err := json.Unmarshal(data, &theme); err != nil {
+		return model.DefaultSiteTheme()
+	}
+	return &theme
+}
+
+// setSiteTheme 将站点主题序列化后写入缓存（永不过期）
+func setSiteTheme(app *core.AppCtx, ctx context.Context, theme *model.SiteTheme) {
+	data, err := json.Marshal(theme)
+	if err != nil {
+		return
+	}
+	app.Cache.Set(ctx, cacheKeySiteTheme, data, 0) // 0 = 永不过期
+}
+
 // InitSiteConf 启动时从 DB 全量加载 bbs_kv 并预热缓存
 // 在 NewAppCtx 之后、路由注册之前调用
 func InitSiteConf(app *core.AppCtx) {
@@ -115,6 +141,7 @@ func InitSiteConf(app *core.AppCtx) {
 	if err != nil {
 		// bbs_kv 表可能为空，使用默认配置
 		setSiteConf(app, ctx, model.DefaultSiteConf())
+		setSiteTheme(app, ctx, model.DefaultSiteTheme())
 		return
 	}
 
@@ -123,4 +150,8 @@ func InitSiteConf(app *core.AppCtx) {
 
 	// 热刷新插件启用状态（从 bbs_kv 读取 active_plugins）
 	app.Hook.ReloadActivePlugins(kv)
+
+	// 3. 预热站点主题缓存
+	theme := model.ParseSiteTheme(kv)
+	setSiteTheme(app, ctx, theme)
 }

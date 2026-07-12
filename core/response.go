@@ -1,8 +1,11 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package core
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
+	"runtime/debug"
 )
 
 // Response 统一 API 响应格式
@@ -30,6 +33,20 @@ func JSONSuccess(w http.ResponseWriter, data interface{}) {
 
 // JSONError 错误响应
 func JSONError(w http.ResponseWriter, httpCode int, msg string) {
+	JSON(w, httpCode, Response{
+		Code:    -1,
+		Message: msg,
+	})
+}
+
+// JSONErrorLog 错误响应 + 日志记录
+// 在返回错误的同时打印详细日志，用于排查 500 类问题
+func JSONErrorLog(w http.ResponseWriter, httpCode int, msg string, err error) {
+	if err != nil {
+		log.Printf("[ERROR] HTTP %d %s | err=%v | stack:\n%s", httpCode, msg, err, debug.Stack())
+	} else {
+		log.Printf("[ERROR] HTTP %d %s | stack:\n%s", httpCode, msg, debug.Stack())
+	}
 	JSON(w, httpCode, Response{
 		Code:    -1,
 		Message: msg,

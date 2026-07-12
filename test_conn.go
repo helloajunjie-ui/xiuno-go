@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package main
 
 import (

@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package model
 
 import (
@@ -41,13 +42,13 @@ func CreateModLog(ctx context.Context, db *sqlx.DB, uid, tid, pid uint32, subjec
 func FindModLog(ctx context.Context, db *sqlx.DB, action string, page, pageSize int) ([]ModLogItem, int, error) {
 	// 先查总数
 	var total int
-	baseWhere := "FROM bbs_modlog"
+	whereClause := ""
 	args := []interface{}{}
 	if action != "" {
-		baseWhere = "FROM bbs_modlog WHERE action = ?"
+		whereClause = "WHERE m.action = ?"
 		args = append(args, action)
 	}
-	err := db.GetContext(ctx, &total, `SELECT COUNT(*) `+baseWhere, args...)
+	err := db.GetContext(ctx, &total, `SELECT COUNT(*) FROM bbs_modlog m `+whereClause, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -57,7 +58,7 @@ func FindModLog(ctx context.Context, db *sqlx.DB, action string, page, pageSize 
 	var list []ModLogItem
 	sqlStr := `SELECT m.*, u.username FROM bbs_modlog m
 		LEFT JOIN bbs_user u ON m.uid = u.uid ` +
-		baseWhere + ` ORDER BY m.logid DESC LIMIT ? OFFSET ?`
+		whereClause + ` ORDER BY m.logid DESC LIMIT ? OFFSET ?`
 	queryArgs := append(args, pageSize, offset)
 	err = db.SelectContext(ctx, &list, sqlStr, queryArgs...)
 	if err != nil {

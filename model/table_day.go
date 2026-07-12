@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package model
 
 import (
@@ -116,8 +117,8 @@ func TableDayCron(ctx context.Context, db *sqlx.DB, crontime int64) error {
 
 		// 写入（REPLACE 语义）
 		_, err = db.ExecContext(ctx,
-			`REPLACE INTO bbs_table_day (year, month, day, create_date, \`+"`table`"+`, maxid, \`+"`count`"+`)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			"REPLACE INTO bbs_table_day (year, month, day, create_date, `table`, maxid, `count`)"+
+				" VALUES (?, ?, ?, ?, ?, ?, ?)",
 			year, month, day, crontime, table, maxID, count)
 		if err != nil {
 			return fmt.Errorf("TableDayCron insert %s: %w", table, err)

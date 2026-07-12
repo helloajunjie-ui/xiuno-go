@@ -1,6 +1,8 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,7 +27,7 @@ type SSOConfig struct {
 // GET /api/v1/sso/config
 func SSOConfigHandler(app *core.AppCtx) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cfg := getSSOConfig(app)
+		cfg := getSSOConfig(r.Context(), app)
 		platforms := make([]map[string]interface{}, 0)
 		if cfg.QQAppID != "" {
 			platforms = append(platforms, map[string]interface{}{
@@ -49,7 +51,7 @@ func SSOConfigHandler(app *core.AppCtx) http.HandlerFunc {
 // GET /api/v1/sso/qq/login -> 302 跳转到 QQ OAuth2 授权页
 func SSOQQLoginHandler(app *core.AppCtx) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cfg := getSSOConfig(app)
+		cfg := getSSOConfig(r.Context(), app)
 		if cfg.QQAppID == "" {
 			core.JSONError(w, http.StatusBadRequest, "QQ 登录未配置")
 			return
@@ -87,7 +89,7 @@ func SSOQQCallbackHandler(app *core.AppCtx) http.HandlerFunc {
 			return
 		}
 
-		cfg := getSSOConfig(app)
+		cfg := getSSOConfig(r.Context(), app)
 
 		// 1. 用 code 换取 access_token
 		token, err := qqGetToken(cfg.QQAppID, cfg.QQAppKey, code, fmt.Sprintf("%s/api/v1/sso/qq/callback", getSiteURL(r)))
@@ -143,7 +145,7 @@ func SSOQQCallbackHandler(app *core.AppCtx) http.HandlerFunc {
 // GET /api/v1/sso/wechat/login -> 302 跳转到微信 OAuth2 授权页
 func SSOWechatLoginHandler(app *core.AppCtx) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cfg := getSSOConfig(app)
+		cfg := getSSOConfig(r.Context(), app)
 		if cfg.WxAppID == "" {
 			core.JSONError(w, http.StatusBadRequest, "微信登录未配置")
 			return
@@ -178,7 +180,7 @@ func SSOWechatCallbackHandler(app *core.AppCtx) http.HandlerFunc {
 			return
 		}
 
-		cfg := getSSOConfig(app)
+		cfg := getSSOConfig(r.Context(), app)
 
 		// 1. 用 code 换取 access_token + openid
 		token, openID, err := wechatGetToken(cfg.WxAppID, cfg.WxAppSecret, code)
@@ -331,22 +333,22 @@ func SSOUnbindHandler(app *core.AppCtx) http.HandlerFunc {
 
 // ====== 内部辅助函数 ======
 
-func getSSOConfig(app *core.AppCtx) *SSOConfig {
+func getSSOConfig(ctx context.Context, app *core.AppCtx) *SSOConfig {
 	cfg := &SSOConfig{}
-	val, ok := app.Cache.Get(nil, "sso_config")
+	val, ok := app.Cache.Get(ctx, "sso_config")
 	if ok {
 		json.Unmarshal(val, cfg)
 		return cfg
 	}
 
 	// 从 bbs_kv 读取
-	kvStr, _, _ := model.KVCacheGet(nil, app.Cache, app.DB, "sso_config")
+	kvStr, _, _ := model.KVCacheGet(ctx, app.Cache, app.DB, "sso_config")
 	if kvStr != "" {
 		json.Unmarshal([]byte(kvStr), cfg)
 	}
 	// 缓存到内存
 	if data, err := json.Marshal(cfg); err == nil {
-		app.Cache.Set(nil, "sso_config", data, 0)
+		app.Cache.Set(ctx, "sso_config", data, 0)
 	}
 	return cfg
 }

@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package handler
 
 import (
@@ -117,8 +118,11 @@ func ThreadDeleteHandler(app *core.AppCtx) http.HandlerFunc {
 		}
 
 		// 软删除事务
+		var deletedFID uint32
 		err = app.Tx(func(tx *sqlx.Tx) error {
-			return model.SoftDeleteThread(r.Context(), tx, uint32(tid))
+			var txErr error
+			deletedFID, txErr = model.SoftDeleteThread(r.Context(), tx, uint32(tid))
+			return txErr
 		})
 		if err != nil {
 			core.JSONError(w, 500, "删除失败")
@@ -132,14 +136,17 @@ func ThreadDeleteHandler(app *core.AppCtx) http.HandlerFunc {
 		}
 
 		// 异步扣减统计数（GREATEST 防 unsigned 溢出）
-		// 注意：计数器扣减后即使后续失败也无法回滚，但此时所有 DB 操作已成功
-		app.Counter.DecrForumThread(uint32(thread.FID))
+		// 注意：版块统计已在 SoftDeleteThread 事务中直接更新，此处不再重复扣减
+		// 用户发帖数和帖子回复数仍通过异步计数器扣减
 		app.Counter.DecrUserThread(uint32(thread.UID))
 		// 帖子下的所有回帖也被软删除了，扣减帖子回复数
 		app.Counter.DecrThreadPost(uint32(tid))
 
 		// 失效帖子详情缓存
 		model.InvalidateThreadCache(r.Context(), app.Cache, uint32(tid))
+		// 失效版块缓存（使版块列表的计数立即更新）
+		model.InvalidateForumListCache(r.Context(), app.Cache)
+		model.InvalidateForumCache(r.Context(), app.Cache, deletedFID)
 		core.JSONSuccess(w, nil)
 	}
 }

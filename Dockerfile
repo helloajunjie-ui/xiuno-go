@@ -1,41 +1,57 @@
-FROM golang:latest AS builder
+# ============================================================
+# Stage 1: 构建前端 (Vue + Vite)
+# ============================================================
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /build/frontend
+
+# 先复制依赖文件，利用 Docker 缓存层
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+# 复制前端源码并构建
+COPY frontend/ ./
+RUN npm run build
+
+# ============================================================
+# Stage 2: 构建后端 (Go)
+# ============================================================
+FROM golang:1.26-alpine AS backend-builder
 
 WORKDIR /build
-
-# 安装 Node.js 和 npm
-RUN apt-get update && apt-get install -y nodejs npm && rm -rf /var/lib/apt/lists/*
 
 # 复制 Go 模块文件
-COPY Xiuno/go.mod Xiuno/go.sum ./Xiuno/
-WORKDIR /build/Xiuno
+COPY go.mod go.sum ./
 RUN go mod download
 
-# 复制所有源码（包括 xiuno-ui）
-WORKDIR /build
-COPY xiuno-ui ./xiuno-ui/
-COPY Xiuno ./Xiuno/
+# 复制 Go 源码
+COPY core/ ./core/
+COPY model/ ./model/
+COPY handler/ ./handler/
+COPY cmd/ ./cmd/
+COPY plugin/ ./plugin/
+COPY ui/ ./ui/
 
-# 构建前端
-WORKDIR /build/xiuno-ui
-RUN npm install && npm run build
+# 复制前端构建产物到 ui/dist/
+COPY --from=frontend-builder /build/frontend/dist/ ./ui/dist/
 
-# 复制前端产物到 ui/dist
-WORKDIR /build/Xiuno
-RUN mkdir -p ui/dist && cp -r /build/xiuno-ui/dist/* ui/dist/
-
-# 编译 Go 二进制（CGO_ENABLED=0 保证静态链接）
+# 编译 Go 二进制（CGO_ENABLED=0 保证静态链接，兼容 alpine）
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o xiuno-server ./cmd/xiuno/
 
-# 运行阶段
+# ============================================================
+# Stage 3: 运行阶段 (最小 alpine 镜像)
+# ============================================================
 FROM alpine:3.19
 
 RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
 
-COPY --from=builder /build/Xiuno/xiuno-server .
-COPY Xiuno/xiuno.json .
+# 复制二进制和配置
+COPY --from=backend-builder /build/xiuno-server .
+COPY xiuno.json .
 
+# 创建运行时目录
 RUN mkdir -p upload/attach upload/avatar upload/forum log
 
 EXPOSE 8080

@@ -17,18 +17,21 @@ instance.interceptors.response.use(
   },
   (error) => {
     if (error.response) {
+      const res = error.response.data
+      const msg = res?.message || ''
       const status = error.response.status
       if (status === 401) {
         console.warn('登录态失效，请重新登录')
       } else if (status === 404) {
         console.warn('资源不存在 (404)')
       } else {
-        console.error('服务器开小差了 (500)')
+        console.error('服务器错误:', msg || status)
       }
-    } else {
-      console.error('网络请求失败')
+      // 将后端返回的 message 透传给调用方，而非 axios 默认的 "Request failed with status code 400"
+      return Promise.reject(new Error(msg || `请求失败 (${status})`))
     }
-    return Promise.reject(error)
+    console.error('网络请求失败')
+    return Promise.reject(new Error('网络请求失败，请检查网络连接'))
   }
 )
 

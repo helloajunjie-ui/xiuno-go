@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package core
 
 import (
@@ -51,11 +52,14 @@ func NewHookManager() *HookManager {
 // Register 注册插件（在 main.go 中调用）
 func (hm *HookManager) Register(app *AppCtx, p Plugin) {
 	hm.mu.Lock()
-	defer hm.mu.Unlock()
 	name := p.Name()
 	hm.plugins[name] = p
 	// 默认启用
 	hm.activePlugins[name] = true
+	hm.mu.Unlock()
+
+	// Init 内部会调用 AddFilter/AddAction，它们也需要获取 hm.mu
+	// 必须在释放锁之后调用，否则 Go 的 sync.Mutex 不可重入会导致死锁
 	p.Init(app)
 	log.Printf("[Plugin] Loaded: %s v%s — %s", name, p.Version(), p.Desc())
 }

@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package model
 
 import (
@@ -267,7 +268,7 @@ func ForumAccessPadding(ctx context.Context, db *sqlx.DB, gid uint32, fill bool)
 // GetAllForums 获取所有版块列表（用于 ForumAccessPadding）
 func GetAllForums(ctx context.Context, db *sqlx.DB) ([]Forum, error) {
 	var list []Forum
-	err := db.SelectContext(ctx, &list, `SELECT * FROM bbs_forum ORDER BY rank ASC, fid ASC`)
+	err := db.SelectContext(ctx, &list, "SELECT * FROM bbs_forum ORDER BY `rank` ASC, fid ASC")
 	if err != nil {
 		return nil, err
 	}

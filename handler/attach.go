@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package handler
 
 import (
@@ -6,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"xiuno/core"
 	"xiuno/model"
@@ -24,16 +26,16 @@ var safeImageMimes = map[string]string{
 
 // UploadHandler 多媒体文件上传处理器
 // 安全策略：
-//   - 5MB 上传上限
+//   - 10MB 上传上限
 //   - http.DetectContentType MIME 嗅探（基于文件头 magic number）
 //   - 仅允许白名单图片格式（jpeg/png/gif/webp）
 //   - 文件名由系统生成（纳秒时间戳），拒绝用户原始文件名
 func UploadHandler(app *core.AppCtx) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// 1. 限制上传大小（5MB）
-		r.Body = http.MaxBytesReader(w, r.Body, 5<<20)
-		if err := r.ParseMultipartForm(5 << 20); err != nil {
-			core.JSONError(w, http.StatusBadRequest, "文件过大或请求格式错误（最大 5MB）")
+		// 1. 限制上传大小（10MB）
+		r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			core.JSONError(w, http.StatusBadRequest, "文件过大或请求格式错误（最大 10MB）")
 			return
 		}
 
@@ -136,7 +138,12 @@ func AttachDownloadHandler(app *core.AppCtx) http.HandlerFunc {
 		// 异步递增下载计数
 		go model.IncrAttachDownload(context.Background(), app.DB, uint32(aid))
 
-		app.Storage.ServeDownload(w, r, att.Filename, att.OrgFilename)
+		// 用 create_date 还原日期目录前缀，拼出完整相对路径
+		// Storage.Put 保存格式: 202601/02/150405.000000000.jpg
+		// att.Filename 只存了后半段: 150405.000000000.jpg
+		dateDir := time.Unix(att.CreateDate, 0).Format("200601/02")
+		fullRelPath := dateDir + "/" + att.Filename
+		app.Storage.ServeDownload(w, r, fullRelPath, att.OrgFilename)
 	}
 }
 

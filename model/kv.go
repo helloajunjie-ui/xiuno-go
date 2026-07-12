@@ -1,8 +1,10 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package model
 
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 
 	"github.com/jmoiron/sqlx"
 
@@ -145,12 +147,12 @@ func ParseSiteConf(kv map[string]string) *SiteConf {
 		conf.SiteURL = v
 	}
 	if v, ok := kv["page_size"]; ok && v != "" {
-		if n, err := parseInt(v); err == nil && n > 0 {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			conf.PageSize = n
 		}
 	}
 	if v, ok := kv["post_page_size"]; ok && v != "" {
-		if n, err := parseInt(v); err == nil && n > 0 {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			conf.PostPageSize = n
 		}
 	}
@@ -166,21 +168,63 @@ func SiteConfToMap(conf *SiteConf) map[string]string {
 		"site_name":      conf.SiteName,
 		"site_brief":     conf.SiteBrief,
 		"site_url":       conf.SiteURL,
-		"page_size":      itoa(conf.PageSize),
-		"post_page_size": itoa(conf.PostPageSize),
+		"page_size":      strconv.Itoa(conf.PageSize),
+		"post_page_size": strconv.Itoa(conf.PostPageSize),
 		"close_reason":   conf.CloseReason,
 	}
 }
 
-// parseInt 辅助函数
-func parseInt(s string) (int, error) {
-	var n int
-	err := json.Unmarshal([]byte(s), &n)
-	return n, err
+// ==================== SiteTheme（主题即数据） ====================
+
+// SiteTheme 站点主题配置（存储在 bbs_kv 表，key = "site_theme"）
+// 前端通过 GET /api/v1/theme 获取，0 DB 压力
+type SiteTheme struct {
+	PrimaryColor string `json:"primary_color"` // 主色，如 "#4f46e5"
+	BgColor      string `json:"bg_color"`      // 背景色，如 "#f9fafb"
+	CardRadius   string `json:"card_radius"`   // 卡片圆角，如 "0.75rem"
+	ListLayout   string `json:"list_layout"`   // 列表布局：classic | waterfall
+	ThemeMode    string `json:"theme_mode"`    // 主题模式：light | dark
+	CustomCSS    string `json:"custom_css"`    // 用户自定义 CSS 片段
 }
 
-// itoa 辅助函数
-func itoa(n int) string {
-	b, _ := json.Marshal(n)
-	return string(b)
+// DefaultSiteTheme 返回默认主题配置
+func DefaultSiteTheme() *SiteTheme {
+	return &SiteTheme{
+		PrimaryColor: "#4f46e5",
+		BgColor:      "#f9fafb",
+		CardRadius:   "0.75rem",
+		ListLayout:   "classic",
+		ThemeMode:    "light",
+		CustomCSS:    "",
+	}
+}
+
+// ParseSiteTheme 从 kv map 解析主题配置
+// 如果 key "site_theme" 不存在或解析失败，返回默认配置
+func ParseSiteTheme(kv map[string]string) *SiteTheme {
+	raw, ok := kv["site_theme"]
+	if !ok || raw == "" {
+		return DefaultSiteTheme()
+	}
+	var theme SiteTheme
+	if err := json.Unmarshal([]byte(raw), &theme); err != nil {
+		return DefaultSiteTheme()
+	}
+	// 字段级兜底
+	if theme.PrimaryColor == "" {
+		theme.PrimaryColor = "#4f46e5"
+	}
+	if theme.BgColor == "" {
+		theme.BgColor = "#f9fafb"
+	}
+	if theme.CardRadius == "" {
+		theme.CardRadius = "0.75rem"
+	}
+	if theme.ListLayout == "" {
+		theme.ListLayout = "classic"
+	}
+	if theme.ThemeMode == "" {
+		theme.ThemeMode = "light"
+	}
+	return &theme
 }

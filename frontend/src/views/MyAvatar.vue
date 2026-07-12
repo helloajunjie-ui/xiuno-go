@@ -1,8 +1,8 @@
+<!-- xiuno-go v2.1.0-beta 尼克修改版 -->
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
-import request from '../utils/request'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -19,7 +19,8 @@ const isLoggedIn = computed(() => userStore.isLoggedIn)
 
 const currentAvatarUrl = computed(() => {
   if (!user.value) return ''
-  return `/upload/avatar/${user.value.uid}.png?t=${user.value.avatar || 0}`
+  // 优先使用后端返回的完整 avatar_url（含 3 层目录切分），回退到扁平路径
+  return user.value.avatar_url || `/upload/avatar/${user.value.uid}.png?t=${user.value.avatar || 0}`
 })
 
 if (!isLoggedIn.value) {

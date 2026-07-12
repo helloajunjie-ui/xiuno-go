@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package main
 
 import (
@@ -31,6 +32,17 @@ func main() {
 	// 2. 初始化应用上下文（DB、Cache）
 	app := core.NewAppCtx(cfg)
 	defer app.Close()
+
+	// 2.3 自动建表 + 初始数据填充（幂等设计）
+	// 放在 NewAppCtx 之后、使用 DB 之前，避免 core→model 循环依赖
+	if err := model.AutoMigrate(app.DB); err != nil {
+		log.Fatalf("[FATAL] 自动建表失败: %v", err)
+	}
+
+	// 2.4 确保默认头像文件存在（生成 128x128 灰色占位 PNG）
+	if err := model.EnsureDefaultAvatar("upload"); err != nil {
+		log.Printf("[WARN] 默认头像生成失败: %v", err)
+	}
 
 	// 2.5 预热站点配置缓存（从 bbs_kv 全量加载到内存）
 	handler.InitSiteConf(app)
@@ -82,8 +94,12 @@ func main() {
 			r.With(core.RateLimitMiddleware(app, "resetpw", 1, 60)).
 				Post("/user/reset-password", handler.UserResetPasswordHandler(app))
 			r.Get("/config", handler.ConfigHandler(app))
+			r.Get("/theme", handler.ThemeHandler(app))
 			r.Get("/runtime", handler.RuntimeHandler(app))
 			r.Get("/attach/{aid}", handler.AttachDownloadHandler(app))
+			r.Get("/tag", handler.TagListHandler(app))
+			r.Get("/tag/{tagid}", handler.TagReadHandler(app))
+			r.Get("/tag/{tagid}/thread", handler.TagThreadListHandler(app))
 			// SSO 第三方登录配置（公开）
 			r.Get("/sso/config", handler.SSOConfigHandler(app))
 		})
@@ -121,6 +137,7 @@ func main() {
 			r.Use(core.AuthMiddleware(app))
 			r.Use(core.AdminMiddleware())
 			r.Put("/config", handler.AdminConfigUpdateHandler(app))
+			r.Put("/theme", handler.AdminThemeUpdateHandler(app))
 			r.Get("/plugin", handler.AdminPluginListHandler(app))
 			r.Put("/plugin", handler.AdminPluginToggleHandler(app))
 			r.Get("/forum", handler.AdminForumListHandler(app))
@@ -137,19 +154,25 @@ func main() {
 			r.Put("/group/{gid}", handler.AdminGroupUpdateHandler(app))
 			r.Delete("/group/{gid}", handler.AdminGroupDeleteHandler(app))
 			r.Get("/modlog", handler.AdminModLogListHandler(app))
+			// 后台标签管理
+			r.Get("/tag", handler.AdminTagListHandler(app))
+			r.Post("/tag", handler.AdminTagCreateHandler(app))
+			r.Put("/tag/{tagid}", handler.AdminTagUpdateHandler(app))
+			r.Delete("/tag/{tagid}", handler.AdminTagDeleteHandler(app))
 			// 后台主题管理（MySQL 模拟队列）
 			r.Post("/thread/scan", handler.AdminThreadScanHandler(app))
 			r.Post("/thread/operation", handler.AdminThreadOperationHandler(app))
 			r.Get("/thread/found", handler.AdminThreadFoundHandler(app))
 			r.Delete("/thread/{tid}", handler.AdminThreadDeleteHandler(app))
 		})
-
-		// SSO OAuth2 回调路由（无需认证，外部 OAuth 回调）
-		r.Get("/api/v1/sso/qq/login", handler.SSOQQLoginHandler(app))
-		r.Get("/api/v1/sso/qq/callback", handler.SSOQQCallbackHandler(app))
-		r.Get("/api/v1/sso/wechat/login", handler.SSOWechatLoginHandler(app))
-		r.Get("/api/v1/sso/wechat/callback", handler.SSOWechatCallbackHandler(app))
 	})
+
+	// SSO OAuth2 回调路由（无需认证，外部 OAuth 回调）
+	// 注意：必须在 /api/v1 路由组外部注册，避免路径前缀重复
+	r.Get("/api/v1/sso/qq/login", handler.SSOQQLoginHandler(app))
+	r.Get("/api/v1/sso/qq/callback", handler.SSOQQCallbackHandler(app))
+	r.Get("/api/v1/sso/wechat/login", handler.SSOWechatLoginHandler(app))
+	r.Get("/api/v1/sso/wechat/callback", handler.SSOWechatCallbackHandler(app))
 
 	// 4. 上传文件静态服务（本地磁盘 upload/ 目录）
 	//    必须在 SPA fallback 之前注册，否则 /* 会吞掉所有 /upload/* 请求
@@ -176,6 +199,10 @@ func main() {
 		f, err := staticFS.Open(path)
 		if err == nil {
 			f.Close()
+			// 带 hash 指纹的静态资源（/assets/*）设置强缓存
+			if strings.HasPrefix(path, "assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			}
 			fileServer.ServeHTTP(w, r)
 			return
 		}
@@ -195,6 +222,8 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		// index.html 不缓存，确保 SPA 更新后浏览器获取最新版本
+		w.Header().Set("Cache-Control", "no-cache")
 		http.ServeContent(w, r, "index.html", stat.ModTime(), indexFile.(io.ReadSeeker))
 	})
 

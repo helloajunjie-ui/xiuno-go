@@ -1,10 +1,16 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package model
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
-	"net"
+	"image"
+	"image/color"
+	"image/png"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -31,11 +37,16 @@ type User struct {
 	PasswordSms string `db:"password_sms" json:"-"`
 	IdNumber    string `db:"idnumber" json:"-"`
 	Mobile      string `db:"mobile" json:"-"`
+	QQ          string `db:"qq" json:"-"`
+
+	// 虚拟货币（不暴露 JSON）
+	Golds uint32 `db:"golds" json:"-"`
+	Rmbs  uint32 `db:"rmbs" json:"-"`
 
 	// 时间戳与统计
-	CreateIP   net.IP    `db:"create_ip" json:"-"`
+	CreateIP   uint32    `db:"create_ip" json:"-"`
 	CreateDate int64     `db:"create_date" json:"create_date"`
-	LoginIP    net.IP    `db:"login_ip" json:"-"`
+	LoginIP    uint32    `db:"login_ip" json:"-"`
 	LoginDate  int64     `db:"login_date" json:"login_date"`
 	Logins     uint32    `db:"logins" json:"logins"`
 	CreatedAt  time.Time `db:"created_at" json:"-"`
@@ -104,6 +115,69 @@ func GetAvatarPath(uid uint32) string {
 	return fmt.Sprintf("avatar/%s/%s/%s.png", s[0:3], s[3:6], s[6:9])
 }
 
+// EnsureDefaultAvatar 确保默认头像文件存在，不存在则生成一个 128x128 灰色占位 PNG
+// 避免前端 <img> 加载默认头像时 404 导致 @error 回退链断裂
+// uploadDir 是上传根目录（如 "upload"），默认头像路径为 uploadDir + "/avatar/0.png"
+func EnsureDefaultAvatar(uploadDir string) error {
+	path := filepath.Join(uploadDir, "avatar", "0.png")
+	if _, err := os.Stat(path); err == nil {
+		return nil // 已存在
+	}
+
+	// 创建目录
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("创建默认头像目录失败: %w", err)
+	}
+
+	// 生成 128x128 灰色头像：浅灰背景 + 深灰人形轮廓
+	img := image.NewRGBA(image.Rect(0, 0, 128, 128))
+
+	// 填充浅灰色背景 (#E5E7EB)
+	bg := color.RGBA{229, 231, 235, 255}
+	for y := 0; y < 128; y++ {
+		for x := 0; x < 128; x++ {
+			img.Set(x, y, bg)
+		}
+	}
+
+	// 画一个简单的圆形人头轮廓（深灰色 #9CA3AF）
+	headColor := color.RGBA{156, 163, 175, 255}
+	cx, cy, r := 64, 50, 28 // 圆心 (64,50)，半径 28
+	for y := cy - r; y <= cy+r; y++ {
+		for x := cx - r; x <= cx+r; x++ {
+			dx, dy := x-cx, y-cy
+			if dx*dx+dy*dy <= r*r {
+				img.Set(x, y, headColor)
+			}
+		}
+	}
+
+	// 画一个简单的身体轮廓（深灰色 #9CA3AF）
+	bodyColor := color.RGBA{156, 163, 175, 255}
+	for y := 82; y < 128; y++ {
+		halfWidth := 35 - (y-82)*3/10 // 上宽下窄的梯形
+		if halfWidth < 10 {
+			halfWidth = 10
+		}
+		for x := 64 - halfWidth; x <= 64+halfWidth; x++ {
+			img.Set(x, y, bodyColor)
+		}
+	}
+
+	// 编码为 PNG
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return fmt.Errorf("编码默认头像 PNG 失败: %w", err)
+	}
+
+	// 写入文件
+	if err := os.WriteFile(path, buf.Bytes(), 0644); err != nil {
+		return fmt.Errorf("写入默认头像文件失败: %w", err)
+	}
+
+	return nil
+}
+
 // UpdateUserAvatar 更新用户头像时间戳
 // 数据库只存时间戳，前端拼接 URL 时加 ?t=timestamp 解决缓存更新
 func UpdateUserAvatar(ctx context.Context, db *sqlx.DB, uid uint32, timestamp int64) error {
@@ -149,9 +223,18 @@ func CreateUser(ctx context.Context, db *sqlx.DB, tx *sqlx.Tx, username, email, 
 		return nil, err
 	}
 
+	// 检测是否为第一个真实注册用户（排除空密码的旧版预置账号）
+	// 第一个注册用户自动成为管理员（gid=1）
+	var userCount int
+	_ = db.GetContext(ctx, &userCount, "SELECT COUNT(*) FROM bbs_user WHERE password != '' AND password IS NOT NULL")
+	defaultGID := uint16(101) // 默认一级用户组
+	if userCount == 0 {
+		defaultGID = 1 // 第一个用户为管理员
+	}
+
 	now := time.Now().Unix()
 	user := &User{
-		GID:        101, // 默认一级用户组
+		GID:        defaultGID,
 		Email:      email,
 		Username:   username,
 		Password:   string(hash),
@@ -238,12 +321,12 @@ func UserFormat(user *User, groupName string, uploadURL, uploadPath string) {
 	if user == nil {
 		return
 	}
-	// IP 格式化
-	if user.CreateIP != nil {
-		user.CreateIPFmt = user.CreateIP.String()
+	// IP 格式化（uint32 存储，仅当非 0 时格式化）
+	if user.CreateIP != 0 {
+		user.CreateIPFmt = modelLong2IP(user.CreateIP)
 	}
-	if user.LoginIP != nil {
-		user.LoginIPFmt = user.LoginIP.String()
+	if user.LoginIP != 0 {
+		user.LoginIPFmt = modelLong2IP(user.LoginIP)
 	}
 	// 日期格式化
 	user.CreateDateFmt = humandate(user.CreateDate)
@@ -272,8 +355,8 @@ func UserSafeInfo(user *User) *User {
 	safe.PasswordSms = ""
 	safe.IdNumber = ""
 	safe.Mobile = ""
-	safe.CreateIP = nil
-	safe.LoginIP = nil
+	safe.CreateIP = 0
+	safe.LoginIP = 0
 	return &safe
 }
 

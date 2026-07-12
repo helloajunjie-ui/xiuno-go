@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package handler
 
 import (
@@ -17,7 +18,7 @@ func ForumListHandler(app *core.AppCtx) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		forums, err := model.GetForumListWithCache(r.Context(), app.Cache, app.DB)
 		if err != nil {
-			core.JSONError(w, 500, "获取版块列表失败")
+			core.JSONErrorLog(w, 500, "获取版块列表失败", err)
 			return
 		}
 

@@ -1,11 +1,29 @@
+<!-- xiuno-go v2.1.0-beta 尼克修改版 -->
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useUserStore } from '../../stores/user'
 import { useRouter } from 'vue-router'
+import request from '../../utils/request'
+
+interface Forum {
+  fid: number
+  name: string
+}
 
 const userStore = useUserStore()
 const router = useRouter()
 const showDropdown = ref(false)
+const showForumList = ref(false)
+const forums = ref<Forum[]>([])
+
+onMounted(async () => {
+  try {
+    const data: any = await request.get('/forum')
+    forums.value = data || []
+  } catch {
+    forums.value = []
+  }
+})
 
 function goLogin() {
   router.push('/login')
@@ -45,6 +63,15 @@ function toggleDropdown() {
 function closeDropdown() {
   showDropdown.value = false
 }
+
+function toggleForumList() {
+  showForumList.value = !showForumList.value
+}
+
+function goForum(fid: number) {
+  showForumList.value = false
+  router.push(`/forum/${fid}`)
+}
 </script>
 
 <template>
@@ -56,6 +83,28 @@ function closeDropdown() {
         </a>
         <nav class="hidden sm:flex gap-4 text-sm text-gray-600">
           <a href="#" @click.prevent="goHome" class="hover:text-indigo-600 transition-colors">社区</a>
+          <!-- 版块导航 -->
+          <div class="relative">
+            <button @click="toggleForumList"
+              class="hover:text-indigo-600 transition-colors cursor-pointer flex items-center gap-1">
+              版块
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            <!-- 版块下拉列表 -->
+            <div v-if="showForumList" @click="closeDropdown" class="fixed inset-0 z-10" />
+            <div v-if="showForumList"
+              class="absolute left-0 mt-2 w-44 bg-white rounded-xl shadow-lg border border-gray-200 py-1.5 z-20">
+              <button v-for="f in forums" :key="f.fid" @click="goForum(f.fid)"
+                class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+                {{ f.name }}
+              </button>
+              <div v-if="forums.length === 0" class="px-4 py-2 text-sm text-gray-400">暂无版块</div>
+            </div>
+          </div>
+          <!-- 标签页链接 -->
+          <a href="#" @click.prevent="router.push('/tags')" class="hover:text-indigo-600 transition-colors">标签</a>
         </nav>
       </div>
       <div class="flex items-center gap-3">

@@ -1,3 +1,4 @@
+<!-- xiuno-go v2.1.0-beta 尼克修改版 -->
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import request from '../utils/request'

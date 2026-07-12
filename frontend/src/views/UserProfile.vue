@@ -1,3 +1,4 @@
+<!-- xiuno-go v2.1.0-beta 尼克修改版 -->
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -16,6 +17,7 @@ interface UserProfile {
   create_date: number
   login_date: number
   logins: number
+  avatar_url?: string   // 后端返回的完整头像 URL，如 /upload/avatar/000/000/001.png
 }
 
 interface ThreadItem {
@@ -35,13 +37,15 @@ const router = useRouter()
 const userStore = useUserStore()
 const user = ref<UserProfile | null>(null)
 const threads = ref<ThreadItem[]>([])
+const posts = ref<ThreadItem[]>([])
 const loading = ref(true)
 const activeTab = ref<'threads' | 'posts'>('threads')
 const deleting = ref(false)
 
 const avatarUrl = computed(() => {
   if (!user.value) return ''
-  return `/upload/avatar/${user.value.uid}.png?t=${user.value.avatar}`
+  // 优先使用后端返回的完整 avatar_url（含 3 层目录切分），回退到扁平路径
+  return user.value.avatar_url || `/upload/avatar/${user.value.uid}.png?t=${user.value.avatar}`
 })
 
 const joinDate = computed(() => {
@@ -87,8 +91,9 @@ async function handleDeleteUser() {
   }
 }
 
-onMounted(async () => {
+async function loadUserData() {
   const uid = route.params.uid as string
+  loading.value = true
   try {
     const [userData, threadData]: any = await Promise.all([
       request.get(`/user/${uid}`),
@@ -101,7 +106,29 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-})
+}
+
+async function loadUserPosts() {
+  const uid = route.params.uid as string
+  loading.value = true
+  try {
+    const data: any = await request.get(`/user/${uid}/post`, { params: { page: 1 } })
+    posts.value = data.list || []
+  } catch (e) {
+    console.error('加载用户回复失败', e)
+  } finally {
+    loading.value = false
+  }
+}
+
+function switchTab(tab: 'threads' | 'posts') {
+  activeTab.value = tab
+  if (tab === 'posts' && posts.value.length === 0) {
+    loadUserPosts()
+  }
+}
+
+onMounted(loadUserData)
 
 function goThread(tid: number) {
   router.push(`/thread/${tid}`)
@@ -162,32 +189,32 @@ function timeAgo(ts: number): string {
               <span>加入于 {{ joinDate }}</span>
               <span>最后活跃 {{ lastLogin }}</span>
             </div>
-          </div>
-          <div v-if="canDelete" class="mt-3 pt-3 border-t border-gray-100">
-            <button @click="handleDeleteUser" :disabled="deleting"
-              class="px-4 py-1.5 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors">
-              {{ deleting ? '删除中...' : '删除用户' }}
-            </button>
+            <div v-if="canDelete" class="mt-3 pt-3 border-t border-gray-100">
+              <button @click="handleDeleteUser" :disabled="deleting"
+                class="px-4 py-1.5 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors">
+                {{ deleting ? '删除中...' : '删除用户' }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
       <!-- Tab 切换 -->
       <div class="flex gap-1 mb-3">
-        <button @click="activeTab = 'threads'"
+        <button @click="switchTab('threads')"
           class="px-4 py-2 text-sm rounded-lg transition-colors"
           :class="activeTab === 'threads' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'">
           主题
         </button>
-        <button @click="activeTab = 'posts'"
+        <button @click="switchTab('posts')"
           class="px-4 py-2 text-sm rounded-lg transition-colors"
           :class="activeTab === 'posts' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'">
           回复
         </button>
       </div>
 
-      <!-- 帖子列表 -->
-      <div class="space-y-3">
+      <!-- 主题列表 -->
+      <div v-if="activeTab === 'threads'" class="space-y-3">
         <div v-for="thread in threads" :key="thread.tid"
           @click="goThread(thread.tid)"
           class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer">
@@ -198,10 +225,22 @@ function timeAgo(ts: number): string {
             <span class="ml-auto">{{ thread.views }} 浏览 · {{ thread.posts }} 回复</span>
           </div>
         </div>
+        <div v-if="threads.length === 0" class="text-center py-16 text-gray-400">暂无主题</div>
+      </div>
 
-        <div v-if="threads.length === 0" class="text-center py-16 text-gray-400">
-          暂无内容
+      <!-- 回复列表 -->
+      <div v-if="activeTab === 'posts'" class="space-y-3">
+        <div v-for="item in posts" :key="item.tid"
+          @click="goThread(item.tid)"
+          class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer">
+          <h2 class="text-base font-semibold text-gray-900 mb-2 line-clamp-1">{{ item.subject }}</h2>
+          <div class="flex items-center gap-4 text-xs text-gray-500">
+            <span>{{ item.username }}</span>
+            <span>{{ timeAgo(item.last_date) }}</span>
+            <span class="ml-auto">{{ item.views }} 浏览 · {{ item.posts }} 回复</span>
+          </div>
         </div>
+        <div v-if="posts.length === 0" class="text-center py-16 text-gray-400">暂无回复</div>
       </div>
     </div>
 

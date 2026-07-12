@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package model
 
 import (
@@ -63,6 +64,17 @@ func CascadeDeleteThread(ctx context.Context, tx *sqlx.Tx, tid uint32) error {
 
 	// 5. 删除 mythread 关联
 	_, _ = tx.ExecContext(ctx, `DELETE FROM bbs_mythread WHERE tid = ?`, tid)
+
+	// 5.1 删除标签关联并更新标签计数
+	var tagIDs []uint32
+	_ = tx.SelectContext(ctx, &tagIDs, `SELECT tagid FROM bbs_thread_tag WHERE tid = ?`, tid)
+	if len(tagIDs) > 0 {
+		_, _ = tx.ExecContext(ctx, `DELETE FROM bbs_thread_tag WHERE tid = ?`, tid)
+		for _, tagid := range tagIDs {
+			_, _ = tx.ExecContext(ctx,
+				`UPDATE bbs_tag SET threads = GREATEST(CAST(threads AS SIGNED) - 1, 0) WHERE tagid = ?`, tagid)
+		}
+	}
 
 	// 5.5 删除 thread_top 置顶记录
 	_, _ = tx.ExecContext(ctx, `DELETE FROM bbs_thread_top WHERE tid = ?`, tid)
@@ -168,8 +180,13 @@ func CascadeDeleteUser(ctx context.Context, db *sqlx.DB, uid uint32, uploadDir s
 			if err := deleteAttachByPIDs(ctx, tx, remainPids); err != nil {
 				return err
 			}
-			// 删除回帖
-			_, err := tx.ExecContext(ctx, `DELETE FROM bbs_post WHERE pid IN (?)`, remainPids)
+			// 删除回帖（sqlx.In 展开切片参数）
+			query, args, err := sqlx.In(`DELETE FROM bbs_post WHERE pid IN (?)`, remainPids)
+			if err != nil {
+				return fmt.Errorf("CascadeDeleteUser build IN query: %w", err)
+			}
+			query = tx.Rebind(query)
+			_, err = tx.ExecContext(ctx, query, args...)
 			if err != nil {
 				return fmt.Errorf("CascadeDeleteUser delete remain posts: %w", err)
 			}

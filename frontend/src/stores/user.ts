@@ -14,6 +14,8 @@ export interface User {
   credits?: number
   login_date?: number
   logins?: number
+  avatar_url?: string   // 后端返回的完整头像 URL，如 /upload/avatar/000/000/001.png
+  avatar_path?: string  // 后端返回的头像相对路径
 }
 
 export const useUserStore = defineStore('user', () => {

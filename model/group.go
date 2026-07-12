@@ -1,3 +1,4 @@
+// xiuno-go v2.1.0-beta 尼克修改版
 package model
 
 import (
@@ -55,20 +56,29 @@ func GetGroup(ctx context.Context, db *sqlx.DB, gid uint32) (*Group, error) {
 
 // CreateGroup 创建用户组
 // 对应 PHP: group_create()
+// 注意：bbs_group.gid 不是 auto_increment，需要手动计算下一个 gid
 func CreateGroup(ctx context.Context, db *sqlx.DB, g *Group) error {
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO bbs_group (name, creditsfrom, creditsto,
+	// 获取当前最大 gid
+	maxID, err := GroupMaxID(ctx, db)
+	if err != nil {
+		return fmt.Errorf("CreateGroup: %w", err)
+	}
+	nextGID := maxID + 1
+
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO bbs_group (gid, name, creditsfrom, creditsto,
 			allowread, allowthread, allowpost, allowattach, allowdown,
 			allowtop, allowupdate, allowdelete, allowmove,
 			allowbanuser, allowdeleteuser, allowviewip)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		g.Name, g.CreditsFrom, g.CreditsTo,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		nextGID, g.Name, g.CreditsFrom, g.CreditsTo,
 		g.AllowRead, g.AllowThread, g.AllowPost, g.AllowAttach, g.AllowDown,
 		g.AllowTop, g.AllowUpdate, g.AllowDelete, g.AllowMove,
 		g.AllowBanUser, g.AllowDeleteUser, g.AllowViewIP)
 	if err != nil {
 		return fmt.Errorf("CreateGroup: %w", err)
 	}
+	g.GID = int64(nextGID)
 	return nil
 }
 
