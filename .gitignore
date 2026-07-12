@@ -25,6 +25,20 @@ dist/
 xiuno.exe
 xiuno-server.exe
 xiuno-server-test.exe
+xiuno-server-windows.exe
+xiuno-server-linux
+
+# Test artifacts (manual HTTP API test files)
+test_conn.go
+test_create_thread*.json
+test_create_reply*.json
+test_edge_cases.json
+test_quote_reply.json
+test_spam.json
+test_pixel.png
+cookies*.txt
+api_response*.json
+threaddetail_chunk.js
 
 # PHP reference (original Xiuno 4.0.4)
 /reference/
