@@ -39,8 +39,7 @@
 
 | 项目 | 说明 |
 |------|------|
-| `AsyncCounter` | 内存批处理计数器，2s flush 间隔。用户发帖/回帖计数、帖子浏览/回复计数走异步；版块帖子数已改为事务内直接 DB 操作 |
-| `globalApp` | 无全局单例，`AppCtx` 通过依赖注入传递 |
+| `AsyncCounter` | 内存批处理计数器，2s flush 间隔。用户发帖/回帖计数、帖子浏览/回复计数走异步；版块帖子数改为事务内直接 DB 操作 + AsyncCounter 双写（`forumThreads` map 仍保留） |
 | 测试覆盖 | 不追求 100% 覆盖。边缘场景转为 GitHub `help wanted` issues |
 
 ## 构建

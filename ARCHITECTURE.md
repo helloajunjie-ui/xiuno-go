@@ -250,6 +250,8 @@ type AppCtx struct {
     Storage     Storage
     RateLimiter *RateLimiter
     Hook        *HookManager
+    Cron        Closer        // 计划任务（启动时自动运行）
+    Policy      *Policy       // 统一权限判定中心，替代 GlobalPolicy 全局单例
 }
 ```
 
@@ -265,31 +267,59 @@ type AppCtx struct {
 
 ```go
 type Config struct {
-    Database struct {
-        DSN         string `json:"dsn"`
-        TablePrefix string `json:"table_prefix"`
-    } `json:"database"`
-    JWT struct {
-        Secret      string `json:"secret"`
-        ExpireHour  int    `json:"expire_hour"`
-    } `json:"jwt"`
-    App struct {
-        UploadDir string `json:"upload_dir"`
-        SiteURL   string `json:"site_url"`
-    } `json:"app"`
-    SMTP struct {
-        Host     string `json:"host"`
-        Port     int    `json:"port"`
-        Username string `json:"username"`
-        Password string `json:"password"`
-        From     string `json:"from"`
-    } `json:"smtp"`
-    SSO struct {
-        QQAppID     string `json:"qq_app_id"`
-        QQAppKey    string `json:"qq_app_key"`
-        WechatAppID string `json:"wechat_app_id"`
-        WechatSecret string `json:"wechat_secret"`
-    } `json:"sso"`
+    Server   ServerConfig   `json:"server"`
+    Database DatabaseConfig `json:"database"`
+    Cache    CacheConfig    `json:"cache"`
+    JWT      JWTConfig      `json:"jwt"`
+    Site     SiteConfig     `json:"site"`
+    SMTP     []SMTPConfig   `json:"smtp,omitempty"`
+}
+
+type ServerConfig struct {
+    Addr            string `json:"addr"`
+    ReadTimeout     int    `json:"read_timeout"`
+    WriteTimeout    int    `json:"write_timeout"`
+    ShutdownTimeout int    `json:"shutdown_timeout"`
+}
+
+type DatabaseConfig struct {
+    DSN         string `json:"dsn"`
+    MaxOpen     int    `json:"max_open"`
+    MaxIdle     int    `json:"max_idle"`
+    TablePrefix string `json:"table_prefix"`
+}
+
+type CacheConfig struct {
+    Driver string      `json:"driver"` // "memory" 或 "redis"
+    Redis  RedisConfig `json:"redis,omitempty"`
+}
+
+type RedisConfig struct {
+    Addr     string `json:"addr"`
+    Password string `json:"password"`
+    DB       int    `json:"db"`
+}
+
+type JWTConfig struct {
+    Secret     string `json:"secret"`
+    ExpireHour int    `json:"expire_hour"`
+}
+
+type SiteConfig struct {
+    Name        string `json:"name"`
+    Brief       string `json:"brief"`
+    URL         string `json:"url"`
+    CloseReason string `json:"close_reason,omitempty"`
+}
+
+type SMTPConfig struct {
+    Email    string `json:"email"`
+    Host     string `json:"host"`
+    Port     int    `json:"port"`
+    User     string `json:"user"`
+    Pass     string `json:"pass"`
+    Secure   string `json:"secure"`
+    FromName string `json:"fromname"`
 }
 ```
 
@@ -299,11 +329,11 @@ type Config struct {
 
 ```go
 type Cache interface {
-    Get(ctx context.Context, key string) (string, bool)
-    Set(ctx context.Context, key string, value string, ttl int)
+    Get(ctx context.Context, key string) ([]byte, bool)
+    Set(ctx context.Context, key string, val []byte, ttl time.Duration)
     Del(ctx context.Context, key string)
     DelPrefix(ctx context.Context, prefix string)
-    Close()
+    Close() error
 }
 ```
 
@@ -313,11 +343,11 @@ type Cache interface {
 
 ### 3.4 异步计数器
 
-[`core/counter.go:14`](core/counter.go:14) — 消除 InnoDB 行锁热点的异步批量计数器：
+[`core/counter.go:15`](core/counter.go:15) — 消除 InnoDB 行锁热点的异步批量计数器：
 
 ```go
 type AsyncCounter struct {
-    forumThreads map[uint32]int // fid -> +N（已废弃，版块计数改为事务内直接操作 DB）
+    forumThreads map[uint32]int // fid -> +N（仍保留，flush 时写入 bbs_forum）
     userThreads  map[uint32]int // uid -> +N
     userPosts    map[uint32]int // uid -> +N
     threadViews  map[uint32]int // tid -> +N
@@ -326,9 +356,9 @@ type AsyncCounter struct {
 ```
 
 - 2 秒间隔批量刷入 DB，将 `UPDATE ... +1` 行锁串行操作合并为批量 UPDATE
-- 覆盖 4 个统计热点：用户发帖数、用户回帖数、帖子浏览数、帖子回复数
-- **版块帖子计数已从 AsyncCounter 移除**，改为在 [`model/thread.go:299`](model/thread.go:299) 的 `CreateThreadAndFirstPost` 和 [`model/thread.go:206`](model/thread.go:206) 的 `SoftDeleteThread` 事务内直接操作 DB，避免容器重启丢失计数
-- 支持 Decr 方法（`DecrUserThread`、`DecrThreadPost`），使用 `GREATEST(CAST(... AS SIGNED) + ?, 0)` 防止 `BIGINT UNSIGNED` 溢出
+- 覆盖 5 个统计热点：版块帖子数、用户发帖数、用户回帖数、帖子浏览数、帖子回复数
+- **技术债**：`forumThreads` 仍保留在 AsyncCounter 中，`flush()` 仍写入 `bbs_forum`。但 handler 层的发帖/删帖流程已改为在事务内直接操作 DB 计数（双写），避免容器重启丢失。详见 [`§9.7`](#97-异步计数器容器重启丢失)
+- 支持 Decr 方法（`DecrForumThread`、`DecrUserThread`、`DecrThreadPost`、`DecrUserPost`），使用 `GREATEST(CAST(... AS SIGNED) + ?, 0)` 防止 `BIGINT UNSIGNED` 溢出
 
 ### 3.5 JWT 认证
 
@@ -344,7 +374,7 @@ JWT Claims 结构：
 type JWTClaims struct {
     UID uint32 `json:"uid"`
     GID uint16 `json:"gid"`
-    jwt.StandardClaims
+    Exp int64  `json:"exp"` // 过期时间戳（秒），自实现校验，无第三方依赖
 }
 ```
 
@@ -393,7 +423,7 @@ func (p *Policy) CanModerateThread(uid uint32, gid uint16) bool
 - 作者本人有权操作自己的帖子
 - `CanModerateThread`：GID 1(超管), 2(超版), 4(版主), 5(实习版主) 具有版务权限
 
-**技术债**：[`core/policy.go:14`](core/policy.go:14) — `var GlobalPolicy = &Policy{}` 是全局单例，未来可注入 `AppCtx`。
+**设计约束**：Policy 位于 `core` 包，不能导入 `model` 包（防止循环依赖），所有参数使用基本类型。Policy 实例通过 `AppCtx.Policy` 注入，无全局单例。
 
 ### 3.9 存储抽象层
 
@@ -1008,10 +1038,14 @@ var dist embed.FS
 
 ```batch
 @echo off
+cd /d "%~dp0frontend"
+call npm run build
 cd /d "%~dp0"
-cd frontend && call npm run build && cd ..
-go build -o xiuno.exe -ldflags="-s -w" ./cmd/xiuno/
-echo Build complete: xiuno.exe
+if exist ui\dist rmdir /s /q ui\dist
+xcopy frontend\dist ui\dist\ /e /i /h /y >nul
+set CGO_ENABLED=0
+go build -ldflags="-s -w" -o xiuno-server.exe cmd\xiuno\main.go
+echo Build complete: xiuno-server.exe
 ```
 
 ---
@@ -1034,26 +1068,17 @@ plugin/
 
 ### 8.2 注册机制
 
-[`core/hook.go`](core/hook.go) 定义了 Hook 注册表：
+[`core/hook.go`](core/hook.go) 定义了 `HookManager` 结构体及方法：
 
 ```go
-var hooks = make(map[string][]func(ctx *AppCtx, params ...interface{}) (interface{}, error))
-
-func AddHook(name string, fn func(ctx *AppCtx, params ...interface{}) (interface{}, error)) {
-    hooks[name] = append(hooks[name], fn)
+type HookManager struct {
+    filters map[string][]FilterFunc
+    actions map[string][]ActionFunc
+    active  map[string]bool // 已启用的插件名
 }
 
-func TriggerHook(ctx *AppCtx, name string, params ...interface{}) ([]interface{}, error) {
-    var results []interface{}
-    for _, fn := range hooks[name] {
-        result, err := fn(ctx, params...)
-        if err != nil {
-            return nil, err
-        }
-        results = append(results, result)
-    }
-    return results, nil
-}
+type FilterFunc func(ctx context.Context, data interface{}) (interface{}, error)
+type ActionFunc func(ctx context.Context, data interface{})
 ```
 
 ### 8.3 插件示例
@@ -1066,9 +1091,19 @@ package main
 import "xiuno/core"
 
 func init() {
-    core.AddHook("post_create_before", func(ctx *core.AppCtx, params ...interface{}) (interface{}, error) {
+    core.Register(nil, &SpamBlocker{})
+}
+
+type SpamBlocker struct{}
+
+func (p *SpamBlocker) Name() string    { return "spam_blocker" }
+func (p *SpamBlocker) Title() string   { return "防灌水" }
+func (p *SpamBlocker) Version() string { return "1.0.0" }
+func (p *SpamBlocker) Desc() string    { return "敏感词过滤" }
+func (p *SpamBlocker) Init(app *core.AppCtx) {
+    app.Hook.AddFilter("spam_blocker", "post_create_before", func(ctx context.Context, data interface{}) (interface{}, error) {
         // 垃圾内容检测逻辑
-        return nil, nil
+        return data, nil
     })
 }
 ```
@@ -1097,24 +1132,7 @@ import (
 
 ## 九、技术债与妥协
 
-### 9.1 全局单例：`globalApp`
-
-[`core/app.go`](core/app.go) 中保留了全局单例：
-
-```go
-var globalApp *AppCtx
-```
-
-**原因**：Hook 系统的回调函数签名不包含 `AppCtx` 参数，插件需要通过全局变量访问应用上下文。
-
-**影响**：
-- 单元测试无法并行
-- 无法在同一进程中运行多个实例
-- 违反依赖倒置原则
-
-**改进方向**：重构 Hook 签名，将 `AppCtx` 作为参数传入回调。
-
-### 9.2 密码兼容：XiunoMD5
+### 9.1 密码兼容：XiunoMD5
 
 [`core/password.go`](core/password.go) 实现了 XiunoMD5 兼容层：
 
@@ -1137,21 +1155,7 @@ func VerifyPassword(hash, password string) bool {
 
 ### 9.3 会话存储
 
-[`model/session.go`](model/session.go) 使用 MySQL 表存储会话，而非 Redis：
-
-```go
-type Session struct {
-    SID      string    `db:"sid"`
-    UID      uint32    `db:"uid"`
-    Expiry   int64     `db:"expiry"`
-    CreateIP string    `db:"create_ip"`
-    Data     string    `db:"data"`
-}
-```
-
-**原因**：保持与 PHP 版一致，降低运维复杂度。
-
-**影响**：每次请求需要查询数据库验证会话，高并发场景下可能成为瓶颈。
+**已废弃**：原 PHP 版的 `bbs_session` / `bbs_session_data` 表已从 schema 中删除，改用 JWT 无状态认证。`model/session.go` 文件保留但不再包含 Session struct，仅作为兼容占位。
 
 ### 9.4 文件存储
 
@@ -1171,11 +1175,11 @@ type LocalStorage struct {
 
 ```go
 type Cache interface {
-    Get(ctx context.Context, key string) (string, bool)
-    Set(ctx context.Context, key string, value string, ttl int)
+    Get(ctx context.Context, key string) ([]byte, bool)
+    Set(ctx context.Context, key string, val []byte, ttl time.Duration)
     Del(ctx context.Context, key string)
     DelPrefix(ctx context.Context, prefix string)
-    Close()
+    Close() error
 }
 ```
 
@@ -1200,14 +1204,15 @@ func QueuePop(ctx context.Context, db *sqlx.DB, queueid uint32) (int64, bool, er
 
 [`core/counter.go`](core/counter.go) 的 `AsyncCounter` 是纯内存数据结构，每 2 秒批量刷入 DB。如果容器在 2 秒窗口内重启，未刷新的计数永久丢失。
 
-**已修复路径**：
-- **版块帖子计数**：已从 AsyncCounter 移除，改为在 [`model/thread.go:299`](model/thread.go:299) 的 `CreateThreadAndFirstPost` 和 [`model/thread.go:206`](model/thread.go:206) 的 `SoftDeleteThread` 事务内直接操作 DB
+**当前状态**：
+- **版块帖子计数**：`forumThreads` map 仍保留在 AsyncCounter 中，`flush()` 仍写入 `bbs_forum`。同时 handler 层的发帖/删帖流程（`CreateThreadAndFirstPost`、`SoftDeleteThread`）也在事务内直接操作 DB 计数。这是**双写过渡期**，最终目标是完全移除 AsyncCounter 的版块计数路径。
 - **启动修正**：[`model/migration.go:364`](model/migration.go:364) — `AutoMigrate` 每次启动执行 `UPDATE bbs_forum f SET f.threads = (SELECT COUNT(*) FROM bbs_thread t WHERE t.fid = f.fid AND t.deleted_at IS NULL)` 自动修正计数
 
 **仍依赖 AsyncCounter 的路径**（允许短暂不一致）：
+- 版块帖子数（`IncrForumThread` / `DecrForumThread`）— 双写，AsyncCounter 路径仍活跃
 - 用户发帖数（`IncrUserThread` / `DecrUserThread`）
-- 用户回帖数（`IncrUserPost`）
-- 帖子浏览数（`IncrThreadViews`）
+- 用户回帖数（`IncrUserPost` / `DecrUserPost`）
+- 帖子浏览数（`IncrThreadView`）
 - 帖子回复数（`IncrThreadPost` / `DecrThreadPost`）
 
 ### 9.8 无正式测试
@@ -1430,7 +1435,6 @@ docker compose up -d
 
 | 债务 | 计划 | 优先级 |
 |------|------|--------|
-| `globalApp` 全局单例 | 重构 Hook 签名，将 `AppCtx` 作为参数传入回调 | P1 |
 | 异步计数器丢失 | 为关键计数路径添加 WAL 或 DB 直写 fallback | P2 |
 | 前端 `any` 类型 | 为所有 API 响应定义 TypeScript interface | P2 |
 
